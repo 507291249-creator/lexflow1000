@@ -1,0 +1,37 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  background: #f5f7fa;
+  color: #172033;
+}
+
+body {
+  margin: 0;
+  background: #f5f7fa;
+}
+
+textarea, input {
+  outline: none;
+}
+
+.card {
+  @apply rounded-lg border border-line bg-white shadow-sm;
+}
+
+.button {
+  @apply inline-flex items-center justify-center gap-2 rounded-md px-3 py-2 text-sm font-medium transition;
+}
+
+.button-primary {
+  @apply button bg-court text-white hover:bg-[#173f60];
+}
+
+.button-secondary {
+  @apply button border border-line bg-white text-ink hover:bg-slate-50;
+}
+
+.badge {
+  @apply rounded px-2 py-1 text-xs font-medium;
+}
