@@ -18,6 +18,13 @@ class CaseCreate(BaseModel):
     next_action: str = ""
 
 
+class AICaseCreate(BaseModel):
+    title: str
+    claimant: str = "待识别"
+    employer: str = "待识别"
+    fact_text: str = ""
+
+
 class CaseManagementUpdate(BaseModel):
     case_no: Optional[str] = None
     case_type: Optional[str] = None
@@ -57,6 +64,58 @@ class TraceCreate(BaseModel):
     tags: list[str] = []
 
 
+class FactReview(BaseModel):
+    action: str
+    human_fact: str = ""
+    reason: str
+
+
+class IssueCreate(BaseModel):
+    title: str
+    description: str = ""
+    analysis_hint: str = ""
+    importance: str = "中"
+    related_facts: list[str] = []
+    reason: str
+
+
+class IssueUpdate(BaseModel):
+    title: str
+    description: str = ""
+    analysis_hint: str = ""
+    status: str = "人工确认"
+    importance: str = "中"
+    related_facts: list[str] = []
+    reason: str
+
+
+class IssueAction(BaseModel):
+    action: str
+    reason: str
+
+
+class AIReview(BaseModel):
+    action: str
+    human_revision: str = ""
+    reason: str
+    supplementary_material: str = ""
+
+
+class WorkUnitReview(BaseModel):
+    action: str
+    reason: str
+    reviewer: str = "承办律师"
+
+
+class MemoryDecision(BaseModel):
+    action: str
+    title: str = ""
+    rule_summary: str = ""
+    decision_pattern: str = ""
+    category: str = "案件经验"
+    reason: str
+
+
 class CaseOut(BaseModel):
     id: int
     title: str
@@ -71,6 +130,9 @@ class CaseOut(BaseModel):
     handler: str
     next_follow_up_at: str
     next_action: str
+    workflow_mode: str = "standard"
+    fact_version: int = 1
+    issue_version: int = 1
     created_at: datetime
 
     class Config:
@@ -107,6 +169,12 @@ class AIOutputOut(BaseModel):
     title: str
     content: str
     meta_json: Any
+    work_unit_id: Optional[int] = None
+    review_status: str = "待复核"
+    version: int = 1
+    fact_version: int = 1
+    issue_version: int = 1
+    input_snapshot_json: Any = {}
     created_at: datetime
 
 
@@ -118,6 +186,10 @@ class TraceOut(BaseModel):
     human_revision: str
     revision_reason: str
     tags: list[str]
+    work_unit_id: Optional[int] = None
+    action: str = "人工修改"
+    object_type: str = "AI输出"
+    object_id: Optional[int] = None
     created_at: datetime
 
 
@@ -130,6 +202,10 @@ class MemoryOut(BaseModel):
     decision_pattern: str
     tags: list[str]
     source_trace_id: Optional[int]
+    source_work_unit_id: Optional[int] = None
+    category: str = "案件经验"
+    status: str = "已沉淀"
+    review_reason: str = ""
     created_at: datetime
 
 
@@ -176,3 +252,53 @@ class FollowUpOut(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+class WorkUnitOut(BaseModel):
+    id: int
+    case_id: int
+    code: str
+    title: str
+    sequence: int
+    status: str
+    description: str
+    input_json: Any
+    output_json: Any
+    ai_output_id: Optional[int]
+    parent_issue_id: Optional[int] = None
+    version: int = 1
+    reviewer: str
+    reviewed_at: Optional[datetime]
+    created_at: datetime
+    updated_at: datetime
+
+
+class FactOut(BaseModel):
+    id: int
+    case_id: int
+    work_unit_id: Optional[int]
+    category: str
+    ai_fact: str
+    human_fact: str
+    source_document: str
+    status: str
+    confidence: str
+    fact_version: int = 1
+    created_at: datetime
+    updated_at: datetime
+
+
+class IssueOut(BaseModel):
+    id: int
+    case_id: int
+    work_unit_id: Optional[int]
+    title: str
+    description: str
+    analysis_hint: str
+    source: str
+    status: str
+    importance: str = "中"
+    related_facts: list[str] = []
+    issue_version: int = 1
+    created_at: datetime
+    updated_at: datetime

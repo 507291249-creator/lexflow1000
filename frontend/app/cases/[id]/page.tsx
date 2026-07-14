@@ -1,0 +1,381 @@
+"use client";
+
+import { ChangeEvent, useEffect, useMemo, useState } from "react";
+import {
+  BookOpen,
+  Check,
+  ChevronRight,
+  FileText,
+  FileUp,
+  Gavel,
+  Layers3,
+  Play,
+  Plus,
+  RefreshCw,
+  Save,
+  Sparkles,
+  X,
+} from "lucide-react";
+import {
+  AIOutput,
+  api,
+  CaseFact,
+  CaseIssue,
+  CaseWorkspace,
+  MemoryItem,
+  WorkUnit,
+} from "@/lib/api";
+
+const tabs = ["概览", "工作流", "材料", "事实", "争点", "分析", "成果", "决策记录"] as const;
+type Tab = (typeof tabs)[number];
+
+const statusClass: Record<string, string> = {
+  "已批准": "bg-[#e7f1ef] text-mint",
+  "已完成": "bg-[#e7f1ef] text-mint",
+  "已确认": "bg-[#e7f1ef] text-mint",
+  "待人工复核": "bg-amber-50 text-amber-700",
+  "待确认": "bg-amber-50 text-amber-700",
+  "AI建议": "bg-blue-50 text-blue-700",
+  "分析中": "bg-blue-50 text-blue-700",
+  "已驳回": "bg-rose-50 text-rose-700",
+  "需修改": "bg-rose-50 text-rose-700",
+  "候选": "bg-violet-50 text-violet-700",
+};
+
+export default function CaseDetailPage({ params }: { params: { id: string } }) {
+  const caseId = Number(params.id);
+  const [workspace, setWorkspace] = useState<CaseWorkspace | null>(null);
+  const [activeTab, setActiveTab] = useState<Tab>("工作流");
+  const [selectedUnitId, setSelectedUnitId] = useState<number | null>(null);
+  const [busy, setBusy] = useState("");
+  const [error, setError] = useState("");
+  const [unitReason, setUnitReason] = useState("已完成材料与逻辑核验，可进入下一工作环节。");
+  const [factEdit, setFactEdit] = useState<{ id: number; text: string; reason: string } | null>(null);
+  const [issueDraft, setIssueDraft] = useState({ title: "", description: "", analysis_hint: "", reason: "人工补充案件争点。" });
+  const [editingIssue, setEditingIssue] = useState<CaseIssue | null>(null);
+  const [issueReason, setIssueReason] = useState("人工核验后更新争点状态。");
+  const [analysisRevision, setAnalysisRevision] = useState("");
+  const [analysisReason, setAnalysisReason] = useState("人工复核后调整结论的表述与证据策略。");
+  const [supplement, setSupplement] = useState("");
+  const [memoryEdit, setMemoryEdit] = useState<MemoryItem | null>(null);
+
+  const load = async () => {
+    try {
+      const data = await api<CaseWorkspace>(`/cases/${caseId}/workspace`);
+      setWorkspace(data);
+      setSelectedUnitId((current) => current || data.work_units[0]?.id || null);
+      setError("");
+    } catch {
+      setError("案件工作台暂时无法读取，请确认后端服务已启动后重试。");
+    }
+  };
+
+  useEffect(() => { void load(); }, [caseId]);
+
+  const selectedUnit = useMemo(
+    () => workspace?.work_units.find((item) => item.id === selectedUnitId) || workspace?.work_units[0],
+    [workspace, selectedUnitId]
+  );
+  const analysis = useMemo(
+    () => workspace?.ai_outputs.find((item) => item.output_type === "analysis"),
+    [workspace]
+  );
+  const draft = useMemo(
+    () => workspace?.ai_outputs.find((item) => item.output_type === "draft"),
+    [workspace]
+  );
+
+  useEffect(() => {
+    if (analysis) setAnalysisRevision(analysis.content);
+  }, [analysis?.id]);
+
+  async function request(path: string, method = "POST", body?: unknown) {
+    setBusy(path);
+    try {
+      await api(path, body === undefined ? { method } : { method, body: JSON.stringify(body) });
+      await load();
+    } catch {
+      setError("操作未完成，请检查必填的修改原因后重试。");
+    } finally {
+      setBusy("");
+    }
+  }
+
+  async function upload(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    setBusy("upload");
+    try {
+      const form = new FormData();
+      form.append("file", file);
+      await api(`/cases/${caseId}/documents/upload`, { method: "POST", body: form });
+      await load();
+    } finally {
+      setBusy("");
+    }
+  }
+
+  if (!workspace) return <div className="card p-6 text-sm text-slate-500">正在加载案件工作台...</div>;
+
+  if (workspace.case.workflow_mode === "ai_case") {
+    return <AiCaseWorkspace caseId={caseId} workspace={workspace} onReload={load} />;
+  }
+
+  const { case: caseItem } = workspace;
+  const runUnit = (unit: WorkUnit) => request(`/cases/${caseId}/work-units/${unit.id}/run`);
+  const reviewUnit = (unit: WorkUnit, action: string) => request(
+    `/cases/${caseId}/work-units/${unit.id}/review`,
+    "POST",
+    { action, reason: unitReason, reviewer: caseItem.handler || "承办律师" }
+  );
+  const reviewFact = (fact: CaseFact, action: string, human_fact = "", reason = "人工核验案件材料后作出判断。") => request(
+    `/facts/${fact.id}/review`,
+    "POST",
+    { action, human_fact, reason }
+  );
+  const reviewOutput = (output: AIOutput, action: string, human_revision = "", reason = analysisReason, supplementary_material = "") => request(
+    `/ai-outputs/${output.id}/review`,
+    "POST",
+    { action, human_revision, reason, supplementary_material }
+  );
+
+  return (
+    <div className="space-y-5">
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div>
+          <div className="flex flex-wrap items-center gap-2">
+            <h1 className="text-2xl font-semibold text-ink">{caseItem.title}</h1>
+            <span className="badge bg-slate-100 text-slate-700">{caseItem.case_no || "案件编号待补"}</span>
+          </div>
+          <p className="mt-2 text-sm text-slate-600">{caseItem.claimant} 诉 {caseItem.employer} · {caseItem.case_type} · 承办人：{caseItem.handler || "未分配"}</p>
+        </div>
+        <button className="button-primary" disabled={Boolean(busy)} onClick={() => request(`/cases/${caseId}/workflow/run-standard`)}>
+          <Play size={16} />
+          运行 P0 标准工作流
+        </button>
+      </div>
+
+      <div className="border-b border-line">
+        <div className="flex min-w-max gap-1 overflow-x-auto pb-2">
+          {tabs.map((tab) => (
+            <button
+              key={tab}
+              className={activeTab === tab ? "rounded-md bg-court px-3 py-2 text-sm font-medium text-white" : "rounded-md px-3 py-2 text-sm text-slate-600 hover:bg-slate-100"}
+              onClick={() => setActiveTab(tab)}
+              type="button"
+            >
+              {tab}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {error && <div role="alert" className="border-l-2 border-amber-500 bg-white px-4 py-3 text-sm text-slate-600">{error}</div>}
+
+      {activeTab === "概览" && <Overview workspace={workspace} onOpen={(tab) => setActiveTab(tab)} />}
+
+      {activeTab === "工作流" && (
+        <div className="grid gap-5 xl:grid-cols-[0.95fr_1.05fr]">
+          <section className="card p-5">
+            <div className="flex items-center justify-between gap-3">
+              <div><h2 className="font-semibold text-ink">标准工作流</h2><p className="mt-1 text-sm text-slate-500">按顺序运行，关键结果进入人工复核。</p></div>
+              <Layers3 size={19} className="text-court" />
+            </div>
+            <div className="mt-5 space-y-2">
+              {workspace.work_units.map((unit) => (
+                <button key={unit.id} type="button" onClick={() => setSelectedUnitId(unit.id)} className={`flex w-full items-center gap-3 rounded-md border px-3 py-3 text-left ${selectedUnit?.id === unit.id ? "border-court bg-[#f0f6fb]" : "border-line hover:border-slate-400"}`}>
+                  <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-slate-100 text-xs font-semibold text-slate-600">{unit.sequence}</span>
+                  <span className="min-w-0 flex-1"><span className="block font-medium text-ink">{unit.title}</span><span className="mt-0.5 block truncate text-xs text-slate-500">{unit.description}</span></span>
+                  <span className={`badge shrink-0 ${statusClass[unit.status] || "bg-slate-100 text-slate-600"}`}>{unit.status}</span>
+                </button>
+              ))}
+            </div>
+          </section>
+
+          {selectedUnit && <WorkUnitDetail
+            unit={selectedUnit}
+            candidate={workspace.memory_candidates.find((item) => item.source_work_unit_id === selectedUnit.id)}
+            busy={busy}
+            reason={unitReason}
+            onReason={setUnitReason}
+            onRun={() => runUnit(selectedUnit)}
+            onReview={(action) => reviewUnit(selectedUnit, action)}
+            onCandidate={() => request(`/work-units/${selectedUnit.id}/memory-candidate`)}
+            onMemoryDecision={(memory, action, values) => request(`/memory/${memory.id}/decision`, "POST", { action, reason: values.reason, title: values.title, rule_summary: values.rule_summary, decision_pattern: values.decision_pattern, category: values.category })}
+            memoryEdit={memoryEdit}
+            onMemoryEdit={setMemoryEdit}
+          />}
+        </div>
+      )}
+
+      {activeTab === "材料" && (
+        <section className="card p-5">
+          <div className="flex flex-wrap items-center justify-between gap-3"><div><h2 className="font-semibold text-ink">案件材料</h2><p className="mt-1 text-sm text-slate-500">上传后会进入材料理解与事实结构化工作单元。</p></div><label className="button-secondary cursor-pointer"><FileUp size={16} />{busy === "upload" ? "正在上传" : "上传材料"}<input className="hidden" type="file" accept=".txt,.pdf,.docx" onChange={upload} /></label></div>
+          <div className="mt-5 grid gap-3 md:grid-cols-2">
+            {workspace.documents.map((doc) => <article key={doc.id} className="rounded-md border border-line p-4"><div className="flex items-start justify-between gap-3"><div className="font-medium text-ink">{doc.filename}</div><span className="badge bg-slate-100 text-slate-600">{doc.file_type}</span></div><p className="mt-3 line-clamp-5 text-sm leading-6 text-slate-600">{doc.raw_text}</p></article>)}
+          </div>
+          <EvidenceTable items={workspace.evidences} />
+        </section>
+      )}
+
+      {activeTab === "事实" && (
+        <section className="space-y-4">
+          <div><h2 className="text-lg font-semibold text-ink">事实结构化</h2><p className="mt-1 text-sm text-slate-600">AI 提取的事实必须经人工接受、修改或驳回后才会进入已确认事实。</p></div>
+          <div className="grid gap-4 lg:grid-cols-3">
+            <FactColumn title="已确认事实" facts={workspace.facts.filter((item) => item.status === "已确认")} onAction={reviewFact} onEdit={setFactEdit} />
+            <FactColumn title="待确认事实" facts={workspace.facts.filter((item) => item.status === "待确认")} onAction={reviewFact} onEdit={setFactEdit} />
+            <FactColumn title="AI 提取事实" facts={workspace.facts.filter((item) => !item.human_fact && item.status !== "已驳回")} onAction={reviewFact} onEdit={setFactEdit} />
+          </div>
+          {factEdit && <section className="card p-5"><div className="flex items-center justify-between"><h3 className="font-semibold text-ink">修改 AI 提取事实</h3><button type="button" title="关闭" onClick={() => setFactEdit(null)}><X size={18} /></button></div><textarea className="mt-3 min-h-28 w-full rounded-md border border-line px-3 py-2 text-sm" value={factEdit.text} onChange={(event) => setFactEdit({ ...factEdit, text: event.target.value })} /><input className="mt-3 w-full rounded-md border border-line px-3 py-2 text-sm" placeholder="填写修改原因" value={factEdit.reason} onChange={(event) => setFactEdit({ ...factEdit, reason: event.target.value })} /><button className="button-primary mt-3" onClick={() => { const fact = workspace.facts.find((item) => item.id === factEdit.id); if (fact) void reviewFact(fact, "修改", factEdit.text, factEdit.reason).then(() => setFactEdit(null)); }}><Save size={16} />保存人工版本</button></section>}
+        </section>
+      )}
+
+      {activeTab === "争点" && (
+        <section className="space-y-4">
+          <div className="flex flex-wrap items-end justify-between gap-3"><div><h2 className="text-lg font-semibold text-ink">争点识别</h2><p className="mt-1 text-sm text-slate-600">从 AI 建议开始，经人工确认后进入分析和完成状态。</p></div><button className="button-secondary" onClick={() => setEditingIssue({ id: 0, case_id: caseId, work_unit_id: null, title: "", description: "", analysis_hint: "", source: "人工新增", status: "人工确认", importance: "中", related_facts: [], issue_version: workspace.case.issue_version, created_at: "", updated_at: "" })}><Plus size={16} />新增争点</button></div>
+          <div className="grid gap-3">
+            {workspace.issues.map((issue) => <IssueRow key={issue.id} issue={issue} busy={busy} onAction={(action) => request(`/issues/${issue.id}/action`, "POST", { action, reason: issueReason })} onEdit={() => setEditingIssue(issue)} onDelete={() => request(`/issues/${issue.id}`, "DELETE", { action: "删除", reason: "人工判断该争点不再适用。" })} />)}
+          </div>
+          {editingIssue && <IssueEditor issue={editingIssue} reason={issueReason} onReason={setIssueReason} onClose={() => setEditingIssue(null)} onSave={(issue) => { if (issue.id) return request(`/issues/${issue.id}`, "PATCH", { title: issue.title, description: issue.description, analysis_hint: issue.analysis_hint, status: issue.status, reason: issueReason }).then(() => setEditingIssue(null)); return request(`/cases/${caseId}/issues`, "POST", { ...issue, reason: issueReason }).then(() => setEditingIssue(null)); }} />}
+        </section>
+      )}
+
+      {activeTab === "分析" && <AnalysisPanel output={analysis} revision={analysisRevision} onRevision={setAnalysisRevision} reason={analysisReason} onReason={setAnalysisReason} supplement={supplement} onSupplement={setSupplement} onReview={reviewOutput} />}
+
+      {activeTab === "成果" && (
+        <section className="space-y-4"><div><h2 className="text-lg font-semibold text-ink">成果</h2><p className="mt-1 text-sm text-slate-600">文书初稿与 AI 输出同样需要人工复核并保留版本差异。</p></div><OutputReviewCard output={draft} reason={analysisReason} onReason={setAnalysisReason} onReview={reviewOutput} /></section>
+      )}
+
+      {activeTab === "决策记录" && (
+        <section className="card p-5"><div className="flex items-center gap-2"><BookOpen size={19} className="text-court" /><div><h2 className="font-semibold text-ink">决策记录</h2><p className="mt-1 text-sm text-slate-500">所有人工接受、修改、驳回、审批与沉淀都会留下可追溯记录。</p></div></div><div className="mt-5 space-y-4">{workspace.traces.map((trace) => <div key={trace.id} className="border-l-2 border-court pl-4"><div className="flex flex-wrap items-center gap-2"><span className="font-medium text-ink">{trace.action}</span><span className="badge bg-slate-100 text-slate-600">{trace.object_type}</span><span className="text-xs text-slate-500">{new Date(trace.created_at).toLocaleString("zh-CN")}</span></div><p className="mt-2 text-sm text-slate-700">修改原因：{trace.revision_reason}</p><details className="mt-2 text-sm text-slate-600"><summary className="cursor-pointer">查看 AI 原始版本与人工版本</summary><div className="mt-2 grid gap-2 lg:grid-cols-2"><pre className="whitespace-pre-wrap rounded-md bg-slate-50 p-3 text-xs leading-5">{trace.ai_suggestion}</pre><pre className="whitespace-pre-wrap rounded-md bg-[#f0f6fb] p-3 text-xs leading-5">{trace.human_revision}</pre></div></details></div>)}</div></section>
+      )}
+    </div>
+  );
+}
+
+function AiCaseWorkspace({ caseId, workspace, onReload }: { caseId: number; workspace: CaseWorkspace; onReload: () => Promise<void> }) {
+  const [tab, setTab] = useState<Tab>("工作流");
+  const [busy, setBusy] = useState("");
+  const [error, setError] = useState("");
+  const [factEdit, setFactEdit] = useState<CaseFact | null>(null);
+  const [issueEdit, setIssueEdit] = useState<CaseIssue | null>(null);
+
+  const factUnit = workspace.work_units.find((item) => item.code === "fact_extraction");
+  const issueUnit = workspace.work_units.find((item) => item.code === "issue_identification");
+  const currentIssueIds = new Set(workspace.issues.map((item) => item.id));
+  const analysisUnits = workspace.work_units.filter((item) => item.code.startsWith("legal_analysis:") && currentIssueIds.has(item.parent_issue_id || -1));
+  const report = workspace.ai_outputs.filter((item) => item.output_type === "legal_report").sort((a, b) => b.version - a.version)[0];
+  const latestFactOutput = workspace.ai_outputs.filter((item) => item.output_type === "fact_extraction").sort((a, b) => b.version - a.version)[0];
+  const latestIssueOutput = workspace.ai_outputs.filter((item) => item.output_type === "issue_identification").sort((a, b) => b.version - a.version)[0];
+  const factsConfirmed = workspace.facts.length > 0 && workspace.facts.every((item) => item.status !== "待确认") && workspace.facts.some((item) => item.status === "已确认");
+
+  async function request(path: string, method = "POST", body?: unknown) {
+    setBusy(path);
+    setError("");
+    try {
+      await api(path, body === undefined ? { method } : { method, body: JSON.stringify(body) });
+      await onReload();
+    } catch (requestError) {
+      setError(requestError instanceof Error ? "操作未完成，请检查前序确认状态和必填修改原因。" : "操作未完成，请重试。");
+    } finally {
+      setBusy("");
+    }
+  }
+
+  async function upload(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    setBusy("upload");
+    try {
+      const body = new FormData();
+      body.append("file", file);
+      await api(`/cases/${caseId}/documents/upload`, { method: "POST", body });
+      await onReload();
+    } catch {
+      setError("材料上传未完成，请检查文件后重试。");
+    } finally {
+      setBusy("");
+    }
+  }
+
+  return (
+    <div className="space-y-5">
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div><div className="flex flex-wrap items-center gap-2"><h1 className="text-2xl font-semibold text-ink">{workspace.case.title}</h1><span className="badge bg-[#eaf3f8] text-court">AI 案件</span></div><p className="mt-2 text-sm text-slate-600">现场材料驱动的事实、争点与法律分析闭环 · 事实版本 {workspace.case.fact_version} · 争点版本 {workspace.case.issue_version}</p></div>
+        {factUnit && <button className="button-secondary" disabled={Boolean(busy)} onClick={() => request(`/cases/${caseId}/work-units/${factUnit.id}/run`)}><RefreshCw size={16} />重新提取事实</button>}
+      </div>
+      <div className="border-b border-line"><div className="flex min-w-max gap-1 overflow-x-auto pb-2">{tabs.map((item) => <button key={item} type="button" onClick={() => setTab(item)} className={tab === item ? "rounded-md bg-court px-3 py-2 text-sm font-medium text-white" : "rounded-md px-3 py-2 text-sm text-slate-600 hover:bg-slate-100"}>{item}</button>)}</div></div>
+      {error && <div role="alert" className="border-l-2 border-amber-500 bg-amber-50 px-4 py-3 text-sm text-amber-800">{error}</div>}
+
+      {tab === "概览" && <AiOverview workspace={workspace} factsConfirmed={factsConfirmed} analysisCount={analysisUnits.length} onOpen={setTab} />}
+
+      {tab === "工作流" && <section className="grid gap-4 lg:grid-cols-[0.8fr_1.2fr]"><div className="card p-5"><h2 className="font-semibold text-ink">现场分析路径</h2><div className="mt-5 space-y-3"><AiStep number="1" title="事实提取" status={factUnit?.status || "待处理"} detail="基于现场输入和上传材料生成结构化事实。" /><AiStep number="2" title="人工确认事实" status={factsConfirmed ? "已完成" : "待确认"} detail="全部事实需接受、修改或驳回。" /><AiStep number="3" title="争点识别" status={issueUnit?.status || (factsConfirmed ? "待处理" : "等待事实确认")} detail="确认事实后自动生成 AI 争点建议。" /><AiStep number="4" title="逐项法律分析" status={analysisUnits.length ? "已创建" : "等待争点确认"} detail="每个确认争点都有独立分析任务和版本。" /><AiStep number="5" title="生成报告" status={report ? "已完成" : "等待已批准分析"} detail="汇总当前版本的事实、争点和已批准分析。" /></div></div><div className="card p-5"><h2 className="font-semibold text-ink">工作单元</h2><div className="mt-4 space-y-3">{workspace.work_units.map((unit) => <div className="rounded-md border border-line p-4" key={unit.id}><div className="flex flex-wrap items-start justify-between gap-3"><div><div className="flex items-center gap-2"><h3 className="font-medium text-ink">{unit.title}</h3><span className={`badge ${statusClass[unit.status] || "bg-slate-100 text-slate-600"}`}>{unit.status}</span></div><p className="mt-1 text-sm text-slate-600">{unit.description}</p></div>{(unit.code === "fact_extraction" || unit.code === "issue_identification" || unit.code.startsWith("legal_analysis:")) && <button className="button-secondary" disabled={Boolean(busy) || (unit.code === "issue_identification" && !factsConfirmed)} onClick={() => request(`/cases/${caseId}/work-units/${unit.id}/run`)}><Play size={16} />运行</button>}</div>{unit.code.startsWith("legal_analysis:") && <p className="mt-3 text-xs text-slate-500">输入事实版本 {workspace.case.fact_version} · 争点版本 {workspace.case.issue_version}</p>}</div>)}</div></div></section>}
+
+      {tab === "材料" && <section className="card p-5"><div className="flex flex-wrap items-center justify-between gap-3"><div><h2 className="font-semibold text-ink">原始材料</h2><p className="mt-1 text-sm text-slate-600">新增材料后可重新运行事实提取；已有分析不会被覆盖。</p></div><label className="button-secondary cursor-pointer"><FileUp size={16} />{busy === "upload" ? "正在上传" : "补充材料"}<input className="hidden" type="file" accept=".pdf,.docx,.txt" onChange={upload} /></label></div><div className="mt-5 divide-y divide-line">{workspace.documents.map((item) => <div key={item.id} className="py-3"><div className="font-medium text-ink">{item.filename}</div><p className="mt-1 whitespace-pre-wrap text-sm leading-6 text-slate-600">{item.raw_text.slice(0, 600) || "文件未能提取文本，请人工核验。"}</p></div>)}</div></section>}
+
+      {tab === "事实" && <section className="space-y-4"><AiExtractionSummary output={latestFactOutput} /><div className="grid gap-4 lg:grid-cols-2">{workspace.facts.map((fact) => <AiFactCard key={fact.id} fact={fact} onAccept={() => request(`/facts/${fact.id}/review`, "POST", { action: "接受", reason: "人工核验现场材料后确认该事实。" })} onReject={() => request(`/facts/${fact.id}/review`, "POST", { action: "驳回", reason: "材料不足以支持该事实。" })} onEdit={() => setFactEdit(fact)} />)}</div>{factEdit && <AiFactEditor fact={factEdit} onClose={() => setFactEdit(null)} onSave={(text, reason) => request(`/facts/${factEdit.id}/review`, "POST", { action: "修改", human_fact: text, reason }).then(() => setFactEdit(null))} />}</section>}
+
+      {tab === "争点" && <section className="space-y-4"><AiIssueSummary output={latestIssueOutput} factsConfirmed={factsConfirmed} /><div className="flex flex-wrap items-center justify-between gap-3"><div><h2 className="text-lg font-semibold text-ink">已识别争点</h2><p className="mt-1 text-sm text-slate-600">确认争点后会动态创建对应的法律分析任务。</p></div><button className="button-secondary" disabled={!factsConfirmed} onClick={() => setIssueEdit({ id: 0, case_id: caseId, work_unit_id: issueUnit?.id || null, title: "", description: "", analysis_hint: "", source: "人工新增", status: "人工确认", importance: "中", related_facts: [], issue_version: workspace.case.issue_version, created_at: "", updated_at: "" })}><Plus size={16} />新增争点</button></div><div className="space-y-3">{workspace.issues.map((issue) => <AiIssueCard key={issue.id} issue={issue} onConfirm={() => request(`/issues/${issue.id}/action`, "POST", { action: "确认", reason: "人工确认该争点需要进入法律分析。" })} onEdit={() => setIssueEdit(issue)} onDelete={() => request(`/issues/${issue.id}`, "DELETE", { action: "删除", reason: "人工判断该争点不适用。" })} />)}</div>{issueEdit && <AiIssueEditor issue={issueEdit} onClose={() => setIssueEdit(null)} onSave={(draft, reason) => { const payload = { title: draft.title, description: draft.description, analysis_hint: draft.analysis_hint, status: "人工确认", importance: draft.importance, related_facts: draft.related_facts, reason }; return draft.id ? request(`/issues/${draft.id}`, "PATCH", payload).then(() => setIssueEdit(null)) : request(`/cases/${caseId}/issues`, "POST", payload).then(() => setIssueEdit(null)); }} />}</section>}
+
+      {tab === "分析" && <section className="space-y-4"><div><h2 className="text-lg font-semibold text-ink">逐项法律分析</h2><p className="mt-1 text-sm text-slate-600">每个确认争点单独运行。重新运行会生成新的版本，并保留旧版本及其决策记录。</p></div>{analysisUnits.map((unit) => <AiAnalysisUnit key={unit.id} unit={unit} outputs={workspace.ai_outputs.filter((item) => item.work_unit_id === unit.id).sort((a, b) => b.version - a.version)} busy={busy} onRun={() => request(`/cases/${caseId}/work-units/${unit.id}/run`)} onReview={(output, action, human_revision, reason, supplementary_material) => request(`/ai-outputs/${output.id}/review`, "POST", { action, human_revision, reason, supplementary_material })} />)}{!analysisUnits.length && <div className="card p-6 text-sm text-slate-500">请先在“争点”中确认至少一个争点。</div>}</section>}
+
+      {tab === "成果" && <section className="space-y-4"><div className="flex flex-wrap items-center justify-between gap-3"><div><h2 className="text-lg font-semibold text-ink">法律分析报告</h2><p className="mt-1 text-sm text-slate-600">报告仅汇总当前事实版本、当前争点版本和已接受或已修改的法律分析。</p></div><button className="button-primary" disabled={Boolean(busy)} onClick={() => request(`/cases/${caseId}/legal-analysis-report`)}><FileText size={16} />生成法律分析报告</button></div>{report ? <div className="card p-5"><div className="flex items-center justify-between gap-3"><h3 className="font-semibold text-ink">{report.title}</h3><span className="badge bg-[#e7f1ef] text-mint">版本 {report.version}</span></div><pre className="mt-5 whitespace-pre-wrap text-sm leading-7 text-slate-700">{report.content}</pre></div> : <div className="card p-6 text-sm text-slate-500">确认事实与争点，并接受至少一份当前版本法律分析后即可生成报告。</div>}</section>}
+
+      {tab === "决策记录" && <DecisionTimeline traces={workspace.traces} />}
+    </div>
+  );
+}
+
+function AiStep({ number, title, status, detail }: { number: string; title: string; status: string; detail: string }) { return <div className="flex gap-3"><span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-[#eaf3f8] text-xs font-semibold text-court">{number}</span><div className="min-w-0 flex-1"><div className="flex flex-wrap items-center gap-2"><span className="font-medium text-ink">{title}</span><span className={`badge ${statusClass[status] || "bg-slate-100 text-slate-600"}`}>{status}</span></div><p className="mt-1 text-sm leading-6 text-slate-600">{detail}</p></div></div>; }
+
+function AiOverview({ workspace, factsConfirmed, analysisCount, onOpen }: { workspace: CaseWorkspace; factsConfirmed: boolean; analysisCount: number; onOpen: (value: Tab) => void }) { return <div className="grid gap-5 lg:grid-cols-[1.2fr_0.8fr]"><section className="card p-5"><h2 className="font-semibold text-ink">案件摘要</h2><p className="mt-4 whitespace-pre-wrap text-sm leading-7 text-slate-700">{workspace.case.summary}</p><div className="mt-5 grid grid-cols-3 gap-3"><Metric label="确认事实" value={workspace.facts.filter((item) => item.status === "已确认").length} /><Metric label="确认争点" value={workspace.issues.filter((item) => item.status === "人工确认").length} /><Metric label="分析任务" value={analysisCount} /></div></section><section className="card p-5"><h2 className="font-semibold text-ink">当前下一步</h2><p className="mt-2 text-sm leading-6 text-slate-600">{factsConfirmed ? "确认需要进入分析的争点，并逐项运行法律分析。" : "先在事实页面完成全部事实的接受、修改或驳回。"}</p><button className="button-primary mt-5" onClick={() => onOpen(factsConfirmed ? "争点" : "事实")}><ChevronRight size={16} />继续处理</button></section></div>; }
+
+function AiExtractionSummary({ output }: { output?: AIOutput }) { const data = ((output?.meta_json as { structured?: Record<string, unknown> })?.structured || {}) as Record<string, unknown>; const mode = (data._llm as { mode?: string } | undefined)?.mode; if (!output) return <div className="card p-5 text-sm text-slate-500">事实提取任务尚未运行。</div>; return <section className="card p-5"><div className="flex flex-wrap items-center justify-between gap-3"><div><h2 className="font-semibold text-ink">AI 事实提取结果</h2><p className="mt-1 text-sm text-slate-600">版本 {output.version} · {mode || "结构化输出"}</p></div><span className="badge bg-slate-100 text-slate-600">事实版本 {output.fact_version}</span></div><div className="mt-4 grid gap-3 md:grid-cols-2"><AiField label="案件摘要" value={data.case_summary} /><AiField label="主体" value={data.parties} /><AiField label="时间线" value={data.timeline} /><AiField label="事实置信度" value={data.fact_confidence} /></div></section>; }
+
+function AiIssueSummary({ output, factsConfirmed }: { output?: AIOutput; factsConfirmed: boolean }) { if (!factsConfirmed) return <div className="card p-5 text-sm text-amber-700">请先完成全部事实确认，系统才会生成争点识别结果。</div>; const data = ((output?.meta_json as { structured?: Record<string, unknown> })?.structured || {}) as Record<string, unknown>; return <section className="card p-5"><h2 className="font-semibold text-ink">AI 争点建议</h2><p className="mt-1 text-sm text-slate-600">{output ? `版本 ${output.version}，请逐项确认、修改、删除或新增。` : "事实确认后正在生成争点建议。"}</p>{output && <AiField label="AI 建议" value={data.issues} />}</section>; }
+
+function AiField({ label, value }: { label: string; value: unknown }) { const text = Array.isArray(value) || (value && typeof value === "object") ? JSON.stringify(value, null, 2) : String(value || "待生成"); return <div className="rounded-md border border-line p-3"><div className="text-xs font-medium text-slate-500">{label}</div><pre className="mt-2 whitespace-pre-wrap text-sm leading-6 text-slate-700">{text}</pre></div>; }
+
+function AiFactCard({ fact, onAccept, onReject, onEdit }: { fact: CaseFact; onAccept: () => void; onReject: () => void; onEdit: () => void }) { return <article className="card p-4"><div className="flex flex-wrap items-center justify-between gap-2"><span className="text-xs font-medium text-court">{fact.category}</span><span className={`badge ${statusClass[fact.status] || "bg-slate-100 text-slate-600"}`}>{fact.status}</span></div><p className="mt-3 text-sm leading-6 text-slate-700">{fact.human_fact || fact.ai_fact}</p><p className="mt-2 text-xs text-slate-500">置信度：{fact.confidence} · 来源：{fact.source_document}</p>{fact.status === "待确认" && <div className="mt-4 flex flex-wrap gap-2"><button className="button-primary" onClick={onAccept}>确认事实</button><button className="button-secondary" onClick={onEdit}>修改</button><button className="button-secondary" onClick={onReject}>驳回</button></div>}</article>; }
+
+function AiFactEditor({ fact, onClose, onSave }: { fact: CaseFact; onClose: () => void; onSave: (text: string, reason: string) => Promise<void> }) { const [text, setText] = useState(fact.human_fact || fact.ai_fact); const [reason, setReason] = useState("根据原始材料修订事实表述。"); return <section className="card p-5"><div className="flex items-center justify-between"><h2 className="font-semibold text-ink">修改事实</h2><button title="关闭" onClick={onClose}><X size={18} /></button></div><textarea className="mt-4 min-h-28 w-full rounded-md border border-line px-3 py-2 text-sm" value={text} onChange={(event) => setText(event.target.value)} /><input className="mt-3 w-full rounded-md border border-line px-3 py-2 text-sm" value={reason} onChange={(event) => setReason(event.target.value)} placeholder="修改原因" /><button className="button-primary mt-3" onClick={() => void onSave(text, reason)}><Save size={16} />保存并确认</button></section>; }
+
+function AiIssueCard({ issue, onConfirm, onEdit, onDelete }: { issue: CaseIssue; onConfirm: () => void; onEdit: () => void; onDelete: () => void }) { return <article className="card p-4"><div className="flex flex-wrap items-start justify-between gap-4"><div><div className="flex flex-wrap items-center gap-2"><h3 className="font-semibold text-ink">{issue.title}</h3><span className={`badge ${statusClass[issue.status] || "bg-slate-100 text-slate-600"}`}>{issue.status}</span><span className="badge bg-slate-100 text-slate-600">重要程度：{issue.importance}</span></div><p className="mt-2 text-sm leading-6 text-slate-700">{issue.description}</p><p className="mt-2 text-xs text-slate-500">关联事实：{issue.related_facts.join("；") || "待补充"}</p></div><div className="flex flex-wrap gap-2"><button className="button-primary" onClick={onConfirm}>确认争点</button><button className="button-secondary" onClick={onEdit}>修改</button><button className="button-secondary" onClick={onDelete}>删除</button></div></div></article>; }
+
+function AiIssueEditor({ issue, onClose, onSave }: { issue: CaseIssue; onClose: () => void; onSave: (draft: CaseIssue, reason: string) => Promise<void> }) { const [draft, setDraft] = useState(issue); const [reason, setReason] = useState("人工核验后更新争点内容。"); return <section className="card p-5"><div className="flex items-center justify-between"><h2 className="font-semibold text-ink">{issue.id ? "修改争点" : "新增争点"}</h2><button title="关闭" onClick={onClose}><X size={18} /></button></div><div className="mt-4 space-y-3"><input className="w-full rounded-md border border-line px-3 py-2 text-sm" value={draft.title} placeholder="争点标题" onChange={(event) => setDraft({ ...draft, title: event.target.value })} /><textarea className="min-h-20 w-full rounded-md border border-line px-3 py-2 text-sm" value={draft.description} placeholder="争点描述" onChange={(event) => setDraft({ ...draft, description: event.target.value })} /><select className="w-full rounded-md border border-line bg-white px-3 py-2 text-sm" value={draft.importance} onChange={(event) => setDraft({ ...draft, importance: event.target.value })}>{["高", "中", "低"].map((item) => <option key={item}>{item}</option>)}</select><input className="w-full rounded-md border border-line px-3 py-2 text-sm" value={draft.related_facts.join("；")} placeholder="关联事实，用分号分隔" onChange={(event) => setDraft({ ...draft, related_facts: event.target.value.split("；").filter(Boolean) })} /><input className="w-full rounded-md border border-line px-3 py-2 text-sm" value={reason} placeholder="修改原因" onChange={(event) => setReason(event.target.value)} /><button className="button-primary" onClick={() => void onSave(draft, reason)}><Save size={16} />保存并确认</button></div></section>; }
+
+function AiAnalysisUnit({ unit, outputs, busy, onRun, onReview }: { unit: WorkUnit; outputs: AIOutput[]; busy: string; onRun: () => void; onReview: (output: AIOutput, action: string, human: string, reason: string, supplement: string) => void }) { const [selected, setSelected] = useState(outputs[0]?.id); const output = outputs.find((item) => item.id === selected) || outputs[0]; const [revision, setRevision] = useState(output?.content || ""); const [reason, setReason] = useState("人工复核该争点的法律分析。 "); const [supplement, setSupplement] = useState(""); useEffect(() => { setRevision(output?.content || ""); }, [output?.id]); const structured = ((output?.meta_json as { structured?: Record<string, unknown> })?.structured || {}) as Record<string, unknown>; return <section className="card p-5"><div className="flex flex-wrap items-start justify-between gap-3"><div><h2 className="font-semibold text-ink">{unit.title}</h2><p className="mt-1 text-sm text-slate-600">当前输入：事实版本 {output?.fact_version || "-"} · 争点版本 {output?.issue_version || "-"}</p></div><button className="button-primary" disabled={Boolean(busy)} onClick={onRun}><Play size={16} />运行分析</button></div>{outputs.length > 0 && <><div className="mt-4 flex flex-wrap gap-2">{outputs.map((item) => <button className={item.id === output?.id ? "rounded-md bg-[#eaf3f8] px-3 py-1.5 text-xs font-medium text-court" : "rounded-md bg-slate-100 px-3 py-1.5 text-xs text-slate-600"} onClick={() => setSelected(item.id)} key={item.id}>版本 {item.version}</button>)}</div><div className="mt-4 grid gap-3 lg:grid-cols-2"><AiField label="核心结论" value={structured.core_conclusion} /><AiField label="风险等级" value={structured.risk_level} /><AiField label="主要理由" value={structured.main_reasons} /><AiField label="适用法律" value={structured.applicable_law} /><AiField label="反方观点" value={structured.counter_arguments} /><AiField label="不确定事项" value={structured.uncertainties} /><AiField label="证据需求" value={structured.evidence_needs} /><AiField label="AI 置信度" value={structured.confidence} /></div><div className="mt-5 border-t border-line pt-4"><textarea className="min-h-40 w-full rounded-md border border-line px-3 py-3 text-sm leading-6" value={revision} onChange={(event) => setRevision(event.target.value)} /><input className="mt-3 w-full rounded-md border border-line px-3 py-2 text-sm" value={reason} placeholder="复核或修改原因" onChange={(event) => setReason(event.target.value)} /><div className="mt-3 flex flex-wrap gap-2"><button className="button-primary" onClick={() => output && onReview(output, "接受", output.content, reason, "")}>接受</button><button className="button-secondary" onClick={() => output && onReview(output, "修改", revision, reason, "")}>保存修改</button><button className="button-secondary" onClick={() => output && onReview(output, "驳回", "", reason, "")}>驳回</button></div><textarea className="mt-4 min-h-20 w-full rounded-md border border-line px-3 py-2 text-sm" value={supplement} placeholder="补充材料后重新分析（可填写新增证据或事实）" onChange={(event) => setSupplement(event.target.value)} /><button className="button-secondary mt-2" onClick={() => output && onReview(output, "补充材料后重新分析", "", reason, supplement)}><RefreshCw size={16} />重新分析</button></div></>}</section>; }
+
+function DecisionTimeline({ traces }: { traces: CaseWorkspace["traces"] }) { return <section className="card p-5"><div className="flex items-center gap-2"><BookOpen size={19} className="text-court" /><div><h2 className="font-semibold text-ink">决策记录</h2><p className="mt-1 text-sm text-slate-500">每次事实、争点和分析的人工操作均保留 AI 原始版本、人工版本和原因。</p></div></div><div className="mt-5 space-y-4">{traces.map((trace) => <div className="border-l-2 border-court pl-4" key={trace.id}><div className="flex flex-wrap items-center gap-2"><span className="font-medium text-ink">{trace.action}</span><span className="badge bg-slate-100 text-slate-600">{trace.object_type}</span><span className="text-xs text-slate-500">{new Date(trace.created_at).toLocaleString("zh-CN")}</span></div><p className="mt-2 text-sm text-slate-700">原因：{trace.revision_reason}</p><details className="mt-2 text-sm text-slate-600"><summary className="cursor-pointer">查看版本差异</summary><div className="mt-2 grid gap-2 lg:grid-cols-2"><pre className="whitespace-pre-wrap rounded-md bg-slate-50 p-3 text-xs leading-5">{trace.ai_suggestion}</pre><pre className="whitespace-pre-wrap rounded-md bg-[#f0f6fb] p-3 text-xs leading-5">{trace.human_revision}</pre></div></details></div>)}</div></section>; }
+
+function Overview({ workspace, onOpen }: { workspace: CaseWorkspace; onOpen: (tab: Tab) => void }) {
+  const confirmed = workspace.facts.filter((item) => item.status === "已确认").length;
+  return <div className="grid gap-5 lg:grid-cols-[1.15fr_0.85fr]"><section className="card p-5"><h2 className="font-semibold text-ink">案件概览</h2><p className="mt-4 whitespace-pre-wrap text-sm leading-7 text-slate-700">{workspace.case.summary || "尚未补充案件摘要。"}</p><div className="mt-5 grid grid-cols-2 gap-3 sm:grid-cols-4"><Metric label="工作单元" value={workspace.work_units.length} /><Metric label="已确认事实" value={confirmed} /><Metric label="争点" value={workspace.issues.length} /><Metric label="决策记录" value={workspace.traces.length} /></div></section><section className="card p-5"><h2 className="font-semibold text-ink">下一步</h2><p className="mt-2 text-sm leading-6 text-slate-600">{workspace.case.next_action || "从工作流开始运行材料理解与事实结构化。"}</p><button className="button-primary mt-5" onClick={() => onOpen("工作流")}><ChevronRight size={16} />进入工作流</button></section></div>;
+}
+
+function Metric({ label, value }: { label: string; value: number }) { return <div className="rounded-md border border-line p-3"><div className="text-xs text-slate-500">{label}</div><div className="mt-1 text-xl font-semibold text-ink">{value}</div></div>; }
+
+function WorkUnitDetail({ unit, candidate, busy, reason, onReason, onRun, onReview, onCandidate, onMemoryDecision, memoryEdit, onMemoryEdit }: { unit: WorkUnit; candidate?: MemoryItem; busy: string; reason: string; onReason: (value: string) => void; onRun: () => void; onReview: (action: string) => void; onCandidate: () => void; onMemoryDecision: (memory: MemoryItem, action: string, values: { title: string; rule_summary: string; decision_pattern: string; category: string; reason: string }) => void; memoryEdit: MemoryItem | null; onMemoryEdit: (item: MemoryItem | null) => void }) {
+  const [memoryReason, setMemoryReason] = useState("人工核验后确认该经验具有复用价值。");
+  return <section className="space-y-5"><div className="card p-5"><div className="flex flex-wrap items-start justify-between gap-3"><div><div className="flex items-center gap-2"><span className="text-xs text-slate-500">工作单元 {unit.sequence}</span><span className={`badge ${statusClass[unit.status] || "bg-slate-100 text-slate-600"}`}>{unit.status}</span></div><h2 className="mt-2 text-lg font-semibold text-ink">{unit.title}</h2><p className="mt-2 text-sm leading-6 text-slate-600">{unit.description}</p></div><button className="button-secondary" disabled={Boolean(busy)} onClick={onRun}><RefreshCw size={16} />运行</button></div><div className="mt-5 rounded-md border border-line bg-slate-50 p-4"><div className="text-xs font-medium text-slate-500">工作单元输出</div><pre className="mt-2 max-h-80 overflow-auto whitespace-pre-wrap text-sm leading-6 text-slate-700">{Object.keys(unit.output_json || {}).length ? JSON.stringify(unit.output_json, null, 2) : "尚未运行该工作单元。"}</pre></div>{unit.status === "待人工复核" && <div className="mt-5"><label className="block text-xs font-medium text-slate-600">复核原因<input className="mt-1 w-full rounded-md border border-line px-3 py-2 text-sm" value={reason} onChange={(event) => onReason(event.target.value)} /></label><div className="mt-3 flex flex-wrap gap-2"><button className="button-primary" onClick={() => onReview("批准")}><Check size={16} />批准工作单元</button><button className="button-secondary" onClick={() => onReview("退回修改")}>退回修改</button></div></div>}</div>{unit.status === "已批准" && !candidate && <section className="card p-5"><h3 className="font-semibold text-ink">候选法律记忆</h3><p className="mt-1 text-sm text-slate-600">已批准的工作单元可以转为候选知识，由人工决定是否沉淀。</p><button className="button-primary mt-4" onClick={onCandidate}><Sparkles size={16} />生成候选知识</button></section>}{candidate && <section className="card p-5"><div className="flex items-start justify-between gap-3"><div><div className="flex items-center gap-2"><h3 className="font-semibold text-ink">候选法律记忆</h3><span className={`badge ${statusClass[candidate.status] || "bg-slate-100 text-slate-600"}`}>{candidate.status}</span></div><p className="mt-2 text-sm text-slate-600">分类：{candidate.category} · {candidate.title}</p></div></div>{candidate.status === "候选" && <div className="mt-4 flex flex-wrap gap-2"><button className="button-primary" onClick={() => onMemoryDecision(candidate, "批准沉淀", { title: candidate.title, rule_summary: candidate.rule_summary, decision_pattern: candidate.decision_pattern, category: candidate.category, reason: memoryReason })}>批准沉淀</button><button className="button-secondary" onClick={() => onMemoryEdit(candidate)}>修改后沉淀</button><button className="button-secondary" onClick={() => onMemoryDecision(candidate, "忽略", { title: candidate.title, rule_summary: candidate.rule_summary, decision_pattern: candidate.decision_pattern, category: candidate.category, reason: "当前经验不具备稳定复用价值。" })}>忽略</button></div>}{memoryEdit?.id === candidate.id && <div className="mt-4 space-y-2"><input className="w-full rounded-md border border-line px-3 py-2 text-sm" value={memoryEdit.title} onChange={(event) => onMemoryEdit({ ...memoryEdit, title: event.target.value })} /><textarea className="min-h-20 w-full rounded-md border border-line px-3 py-2 text-sm" value={memoryEdit.rule_summary} onChange={(event) => onMemoryEdit({ ...memoryEdit, rule_summary: event.target.value })} /><select className="w-full rounded-md border border-line bg-white px-3 py-2 text-sm" value={memoryEdit.category} onChange={(event) => onMemoryEdit({ ...memoryEdit, category: event.target.value })}>{["裁判规则", "案件经验", "论证模式", "证据规则", "工作流经验"].map((item) => <option key={item}>{item}</option>)}</select><input className="w-full rounded-md border border-line px-3 py-2 text-sm" value={memoryReason} onChange={(event) => setMemoryReason(event.target.value)} /><button className="button-primary" onClick={() => onMemoryDecision(candidate, "修改后沉淀", { title: memoryEdit.title, rule_summary: memoryEdit.rule_summary, decision_pattern: memoryEdit.decision_pattern, category: memoryEdit.category, reason: memoryReason })}>保存并沉淀</button></div>}</section>}</section>;
+}
+
+function EvidenceTable({ items }: { items: CaseWorkspace["evidences"] }) { if (!items.length) return null; return <div className="mt-5 overflow-hidden rounded-md border border-line"><table className="w-full text-left text-sm"><thead className="bg-slate-50 text-xs text-slate-500"><tr><th className="px-3 py-2">证据</th><th className="px-3 py-2">证明事实</th><th className="px-3 py-2">强度</th></tr></thead><tbody className="divide-y divide-line">{items.map((item) => <tr key={item.id}><td className="px-3 py-3 font-medium text-ink">{item.name}</td><td className="px-3 py-3 text-slate-600">{item.fact_to_prove}</td><td className="px-3 py-3 text-slate-600">{item.strength}</td></tr>)}</tbody></table></div>; }
+
+function FactColumn({ title, facts, onAction, onEdit }: { title: string; facts: CaseFact[]; onAction: (fact: CaseFact, action: string, human_fact?: string, reason?: string) => void; onEdit: (value: { id: number; text: string; reason: string }) => void }) { return <section className="card p-4"><h3 className="font-semibold text-ink">{title}<span className="ml-2 text-sm font-normal text-slate-500">{facts.length}</span></h3><div className="mt-4 space-y-3">{facts.map((fact) => <article key={fact.id} className="rounded-md border border-line p-3"><div className="flex items-center justify-between gap-2"><span className="text-xs font-medium text-court">{fact.category}</span><span className={`badge ${statusClass[fact.status] || "bg-slate-100 text-slate-600"}`}>{fact.status}</span></div><p className="mt-2 text-sm leading-6 text-slate-700">{fact.human_fact || fact.ai_fact}</p><div className="mt-2 text-xs text-slate-500">AI 置信度：{fact.confidence} · 来源：{fact.source_document || "案件摘要"}</div>{fact.status === "待确认" && <div className="mt-3 flex flex-wrap gap-2"><button className="button-secondary" onClick={() => onAction(fact, "接受")}>接受</button><button className="button-secondary" onClick={() => onEdit({ id: fact.id, text: fact.ai_fact, reason: "根据原始材料修订事实表述。" })}>修改</button><button className="button-secondary" onClick={() => onAction(fact, "驳回", "", "现有材料不足以支持该事实。")}>驳回</button></div>}</article>)}{!facts.length && <p className="text-sm text-slate-500">运行“事实结构化”后生成。</p>}</div></section>; }
+
+function IssueRow({ issue, onAction, onEdit, onDelete }: { issue: CaseIssue; busy: string; onAction: (action: string) => void; onEdit: () => void; onDelete: () => void }) { return <article className="card p-4"><div className="flex flex-wrap items-start justify-between gap-3"><div><div className="flex items-center gap-2"><h3 className="font-semibold text-ink">{issue.title}</h3><span className={`badge ${statusClass[issue.status] || "bg-slate-100 text-slate-600"}`}>{issue.status}</span></div><p className="mt-2 text-sm leading-6 text-slate-600">{issue.description}</p><p className="mt-2 text-sm text-court">分析提示：{issue.analysis_hint}</p></div><div className="flex flex-wrap gap-2"><button className="button-secondary" onClick={() => onAction("确认")}>确认</button><button className="button-secondary" onClick={() => onAction("开始分析")}>分析中</button><button className="button-secondary" onClick={() => onAction("完成")}>已完成</button><button className="button-secondary" onClick={onEdit}>修改</button><button className="button-secondary" onClick={onDelete}>删除</button></div></div></article>; }
+
+function IssueEditor({ issue, reason, onReason, onClose, onSave }: { issue: CaseIssue; reason: string; onReason: (value: string) => void; onClose: () => void; onSave: (issue: CaseIssue) => Promise<void> }) { const [draft, setDraft] = useState(issue); return <section className="card p-5"><div className="flex items-center justify-between"><h3 className="font-semibold text-ink">{issue.id ? "修改争点" : "新增争点"}</h3><button type="button" title="关闭" onClick={onClose}><X size={18} /></button></div><div className="mt-4 space-y-3"><input className="w-full rounded-md border border-line px-3 py-2 text-sm" placeholder="争点标题" value={draft.title} onChange={(event) => setDraft({ ...draft, title: event.target.value })} /><textarea className="min-h-20 w-full rounded-md border border-line px-3 py-2 text-sm" placeholder="争点说明" value={draft.description} onChange={(event) => setDraft({ ...draft, description: event.target.value })} /><input className="w-full rounded-md border border-line px-3 py-2 text-sm" placeholder="分析提示" value={draft.analysis_hint} onChange={(event) => setDraft({ ...draft, analysis_hint: event.target.value })} /><input className="w-full rounded-md border border-line px-3 py-2 text-sm" placeholder="修改原因" value={reason} onChange={(event) => onReason(event.target.value)} /><button className="button-primary" onClick={() => void onSave(draft)}><Save size={16} />保存争点</button></div></section>; }
+
+function AnalysisPanel({ output, revision, onRevision, reason, onReason, supplement, onSupplement, onReview }: { output?: AIOutput; revision: string; onRevision: (value: string) => void; reason: string; onReason: (value: string) => void; supplement: string; onSupplement: (value: string) => void; onReview: (output: AIOutput, action: string, human_revision?: string, reason?: string, supplementary_material?: string) => void }) {
+  if (!output) return <section className="card p-6 text-sm text-slate-500">请先在工作流中运行“法律检索”“类案分析”或“综合论证”。</section>;
+  const structured = ((output.meta_json as { structured?: Record<string, unknown> })?.structured || {}) as Record<string, unknown>;
+  const fields: Array<[string, unknown]> = [
+    ["核心结论", structured.core_conclusion], ["风险等级", structured.risk_level], ["主要理由", structured.main_reasons], ["支持依据", structured.supporting_basis],
+    ["反方观点", structured.counter_arguments], ["不确定事项", structured.uncertainties], ["下一步证据", structured.next_evidence], ["AI 置信度", structured.confidence],
+  ];
+  return <section className="space-y-4"><div><h2 className="text-lg font-semibold text-ink">结构化 AI 分析</h2><p className="mt-1 text-sm text-slate-600">每次接受、修改、驳回或补充材料后重新分析都会进入决策记录。</p></div><div className="grid gap-4 lg:grid-cols-2">{fields.map(([label, value]) => <div key={label} className="card p-4"><div className="text-xs font-medium text-slate-500">{label}</div><div className="mt-2 whitespace-pre-wrap text-sm leading-6 text-slate-700">{Array.isArray(value) ? value.map((item) => `• ${item}`).join("\n") : String(value || "待生成")}</div></div>)}</div><section className="card p-5"><h3 className="font-semibold text-ink">人工复核 AI 分析</h3><textarea className="mt-3 min-h-44 w-full rounded-md border border-line px-3 py-3 text-sm leading-6" value={revision} onChange={(event) => onRevision(event.target.value)} /><input className="mt-3 w-full rounded-md border border-line px-3 py-2 text-sm" placeholder="修改或复核原因" value={reason} onChange={(event) => onReason(event.target.value)} /><div className="mt-3 flex flex-wrap gap-2"><button className="button-primary" onClick={() => onReview(output, "接受", output.content, reason)}>接受</button><button className="button-secondary" onClick={() => onReview(output, "修改", revision, reason)}>修改</button><button className="button-secondary" onClick={() => onReview(output, "驳回", "", reason)}>驳回</button></div><div className="mt-5 border-t border-line pt-4"><label className="text-sm font-medium text-ink">补充材料后重新分析<textarea className="mt-2 min-h-20 w-full rounded-md border border-line px-3 py-2 text-sm" placeholder="例如：已补充解除通知原始聊天记录和工资流水。" value={supplement} onChange={(event) => onSupplement(event.target.value)} /></label><button className="button-secondary mt-2" onClick={() => onReview(output, "补充材料后重新分析", "", reason, supplement)}><RefreshCw size={16} />重新分析</button></div></section></section>;
+}
+
+function OutputReviewCard({ output, reason, onReason, onReview }: { output?: AIOutput; reason: string; onReason: (value: string) => void; onReview: (output: AIOutput, action: string, human_revision?: string, reason?: string, supplementary_material?: string) => void }) { const [draft, setDraft] = useState(output?.content || ""); useEffect(() => setDraft(output?.content || ""), [output?.id]); if (!output) return <section className="card p-6 text-sm text-slate-500">运行“文书生成”工作单元后显示劳动仲裁申请书初稿。</section>; return <section className="card p-5"><div className="flex items-center justify-between"><h3 className="font-semibold text-ink">{output.title}</h3><span className={`badge ${statusClass[output.review_status] || "bg-slate-100 text-slate-600"}`}>{output.review_status}</span></div><textarea className="mt-4 min-h-96 w-full rounded-md border border-line px-3 py-3 font-mono text-sm leading-6" value={draft} onChange={(event) => setDraft(event.target.value)} /><input className="mt-3 w-full rounded-md border border-line px-3 py-2 text-sm" placeholder="人工修改原因" value={reason} onChange={(event) => onReason(event.target.value)} /><div className="mt-3 flex flex-wrap gap-2"><button className="button-primary" onClick={() => onReview(output, "接受", output.content, reason)}>接受初稿</button><button className="button-secondary" onClick={() => onReview(output, "修改", draft, reason)}>保存人工修改</button><button className="button-secondary" onClick={() => onReview(output, "驳回", "", reason)}>驳回</button></div></section>; }

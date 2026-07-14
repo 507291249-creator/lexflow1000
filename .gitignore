@@ -1,4 +1,12 @@
 .venv/
 __pycache__/
 .env
-frontend/
+.vercel/
+frontend/.next/
+frontend/node_modules/
+frontend/tsconfig.tsbuildinfo
+frontend/.DS_Store
+backend/data/
+backend/app/uploads/
+.env.*
+!.env.example

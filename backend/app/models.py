@@ -22,6 +22,9 @@ class Case(Base):
     handler = Column(String(120), default="")
     next_follow_up_at = Column(String(32), default="")
     next_action = Column(Text, default="")
+    workflow_mode = Column(String(40), default="standard")
+    fact_version = Column(Integer, default=1)
+    issue_version = Column(Integer, default=1)
     created_at = Column(DateTime, default=datetime.utcnow)
 
     documents = relationship("Document", back_populates="case", cascade="all, delete-orphan")
@@ -32,6 +35,9 @@ class Case(Base):
     work_records = relationship("CaseWorkRecord", back_populates="case", cascade="all, delete-orphan")
     todos = relationship("CaseTodo", back_populates="case", cascade="all, delete-orphan")
     follow_ups = relationship("CaseFollowUp", back_populates="case", cascade="all, delete-orphan")
+    work_units = relationship("WorkUnit", back_populates="case", cascade="all, delete-orphan")
+    facts = relationship("CaseFact", back_populates="case", cascade="all, delete-orphan")
+    issues = relationship("CaseIssue", back_populates="case", cascade="all, delete-orphan")
 
 
 class Document(Base):
@@ -73,6 +79,12 @@ class AIOutput(Base):
     title = Column(String(255), nullable=False)
     content = Column(Text, nullable=False)
     meta_json = Column(Text, default="{}")
+    work_unit_id = Column(Integer, ForeignKey("work_units.id"), nullable=True)
+    review_status = Column(String(40), default="待复核")
+    version = Column(Integer, default=1)
+    fact_version = Column(Integer, default=1)
+    issue_version = Column(Integer, default=1)
+    input_snapshot_json = Column(Text, default="{}")
     created_at = Column(DateTime, default=datetime.utcnow)
 
     case = relationship("Case", back_populates="outputs")
@@ -88,6 +100,10 @@ class DecisionTrace(Base):
     human_revision = Column(Text, nullable=False)
     revision_reason = Column(Text, nullable=False)
     tags = Column(String(255), default="")
+    work_unit_id = Column(Integer, ForeignKey("work_units.id"), nullable=True)
+    action = Column(String(80), default="人工修改")
+    object_type = Column(String(80), default="AI输出")
+    object_id = Column(Integer, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 
     case = relationship("Case", back_populates="traces")
@@ -104,7 +120,74 @@ class LegalMemory(Base):
     decision_pattern = Column(Text, nullable=False)
     tags = Column(String(255), default="")
     source_trace_id = Column(Integer, ForeignKey("decision_traces.id"), nullable=True)
+    source_work_unit_id = Column(Integer, ForeignKey("work_units.id"), nullable=True)
+    category = Column(String(80), default="案件经验")
+    status = Column(String(40), default="已沉淀")
+    review_reason = Column(Text, default="")
     created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class WorkUnit(Base):
+    __tablename__ = "work_units"
+
+    id = Column(Integer, primary_key=True, index=True)
+    case_id = Column(Integer, ForeignKey("cases.id"), nullable=False)
+    code = Column(String(80), nullable=False)
+    title = Column(String(120), nullable=False)
+    sequence = Column(Integer, nullable=False)
+    status = Column(String(40), default="待处理")
+    description = Column(Text, default="")
+    input_json = Column(Text, default="{}")
+    output_json = Column(Text, default="{}")
+    # Kept as an identifier to avoid a cyclic DDL dependency with ai_outputs.
+    ai_output_id = Column(Integer, nullable=True)
+    parent_issue_id = Column(Integer, nullable=True)
+    version = Column(Integer, default=1)
+    reviewer = Column(String(120), default="")
+    reviewed_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    case = relationship("Case", back_populates="work_units")
+
+
+class CaseFact(Base):
+    __tablename__ = "case_facts"
+
+    id = Column(Integer, primary_key=True, index=True)
+    case_id = Column(Integer, ForeignKey("cases.id"), nullable=False)
+    work_unit_id = Column(Integer, ForeignKey("work_units.id"), nullable=True)
+    category = Column(String(80), default="一般事实")
+    ai_fact = Column(Text, nullable=False)
+    human_fact = Column(Text, default="")
+    source_document = Column(String(255), default="")
+    status = Column(String(40), default="待确认")
+    confidence = Column(String(40), default="中")
+    fact_version = Column(Integer, default=1)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    case = relationship("Case", back_populates="facts")
+
+
+class CaseIssue(Base):
+    __tablename__ = "case_issues"
+
+    id = Column(Integer, primary_key=True, index=True)
+    case_id = Column(Integer, ForeignKey("cases.id"), nullable=False)
+    work_unit_id = Column(Integer, ForeignKey("work_units.id"), nullable=True)
+    title = Column(String(255), nullable=False)
+    description = Column(Text, default="")
+    analysis_hint = Column(Text, default="")
+    source = Column(String(40), default="AI建议")
+    status = Column(String(40), default="AI建议")
+    importance = Column(String(40), default="中")
+    related_facts = Column(Text, default="[]")
+    issue_version = Column(Integer, default=1)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    case = relationship("Case", back_populates="issues")
 
 
 class WorkflowEvent(Base):
