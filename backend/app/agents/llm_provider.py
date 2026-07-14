@@ -8,11 +8,15 @@ remains usable during local demos without pretending that a model was called.
 from __future__ import annotations
 
 import json
+import logging
 import os
 from dataclasses import dataclass
 from typing import Any, Callable, Type
 
 from pydantic import BaseModel, ValidationError
+
+
+logger = logging.getLogger(__name__)
 
 
 class StructuredOutputError(RuntimeError):
@@ -113,9 +117,23 @@ def generate_structured(
             if attempt == 2:
                 raise StructuredOutputError("模型输出未通过结构化校验。", code="schema_validation_failed", attempts=attempt) from exc
         except Exception as exc:
+            # Record provider diagnostics in the server log without exposing credentials or case material.
+            logger.warning(
+                "LLM request failed: provider=%s model=%s task=%s attempt=%s error_type=%s detail=%s",
+                provider.name,
+                provider.model,
+                task,
+                attempt,
+                type(exc).__name__,
+                str(exc)[:500],
+            )
             if local_fallback_allowed():
                 return _validated_fallback(fallback, output_model, error=str(exc)[:180])
-            raise StructuredOutputError("模型调用失败，未启用本地备用解析。", code="llm_execution_failed", attempts=attempt) from exc
+            raise StructuredOutputError(
+                f"{provider.name} 模型调用失败（{type(exc).__name__}），请查看 Render 日志。",
+                code="llm_execution_failed",
+                attempts=attempt,
+            ) from exc
 
     raise StructuredOutputError("模型输出执行失败。", attempts=2)
 
