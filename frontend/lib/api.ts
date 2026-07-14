@@ -7,6 +7,7 @@ export type CaseItem = {
   employer: string;
   status: string;
   summary: string;
+  raw_facts: string;
   claim_amount: string;
   case_no: string;
   case_type: string;
@@ -43,6 +44,7 @@ export type AIOutput = {
   fact_version: number;
   issue_version: number;
   input_snapshot_json: Record<string, unknown>;
+  execution_mode: "llm" | "fallback" | "unknown";
   created_at: string;
 };
 
@@ -167,6 +169,7 @@ export type CaseIssue = {
   status: string;
   importance: string;
   related_facts: string[];
+  related_fact_ids: string[];
   issue_version: number;
   created_at: string;
   updated_at: string;

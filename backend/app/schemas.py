@@ -9,6 +9,7 @@ class CaseCreate(BaseModel):
     claimant: str
     employer: str
     summary: str = ""
+    raw_facts: str = ""
     claim_amount: str = ""
     case_no: str = ""
     case_type: str = "劳动仲裁"
@@ -23,6 +24,7 @@ class AICaseCreate(BaseModel):
     claimant: str = "待识别"
     employer: str = "待识别"
     fact_text: str = ""
+    case_type: str = "劳动争议"
 
 
 class CaseManagementUpdate(BaseModel):
@@ -76,6 +78,7 @@ class IssueCreate(BaseModel):
     analysis_hint: str = ""
     importance: str = "中"
     related_facts: list[str] = []
+    related_fact_ids: list[str] = []
     reason: str
 
 
@@ -86,6 +89,7 @@ class IssueUpdate(BaseModel):
     status: str = "人工确认"
     importance: str = "中"
     related_facts: list[str] = []
+    related_fact_ids: list[str] = []
     reason: str
 
 
@@ -123,6 +127,7 @@ class CaseOut(BaseModel):
     employer: str
     status: str
     summary: str
+    raw_facts: str = ""
     claim_amount: str
     case_no: str
     case_type: str
@@ -175,6 +180,7 @@ class AIOutputOut(BaseModel):
     fact_version: int = 1
     issue_version: int = 1
     input_snapshot_json: Any = {}
+    execution_mode: str = "llm"
     created_at: datetime
 
 
@@ -299,6 +305,7 @@ class IssueOut(BaseModel):
     status: str
     importance: str = "中"
     related_facts: list[str] = []
+    related_fact_ids: list[str] = []
     issue_version: int = 1
     created_at: datetime
     updated_at: datetime

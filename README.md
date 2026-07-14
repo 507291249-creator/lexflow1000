@@ -23,6 +23,8 @@ export OPENAI_API_KEY="你的服务端密钥"
 export OPENAI_MODEL="gpt-4o-mini"
 ```
 
+本地演示默认允许 `ALLOW_LOCAL_AI_FALLBACK=true`：未配置模型密钥时，页面会明确标记“本地备用解析”。生产环境建议设置 `ALLOW_LOCAL_AI_FALLBACK=false`，这样缺少密钥、模型调用失败或结构化输出连续校验失败时，工作单元会显示“失败”并允许人工重新运行，而不会静默替换为备用结果。
+
 未配置密钥或模型调用暂时不可用时，系统会明确显示“备用解析”，并根据新输入材料动态生成基础结构，方便本地走通流程；它不会把预设示例答案作为新案件的主逻辑。
 
 代码中已预留 `legal_research`、`case_retrieval` 外部数据源边界，后续可接入北大法宝等服务。

@@ -15,6 +15,8 @@ class Case(Base):
     employer = Column(String(120), nullable=False)
     status = Column(String(50), default="created")
     summary = Column(Text, default="")
+    # Keeps the user's original intake text separate from the AI-maintained summary.
+    raw_facts = Column(Text, default="")
     claim_amount = Column(String(80), default="")
     case_no = Column(String(80), default="")
     case_type = Column(String(80), default="劳动仲裁")
@@ -183,6 +185,8 @@ class CaseIssue(Base):
     status = Column(String(40), default="AI建议")
     importance = Column(String(40), default="中")
     related_facts = Column(Text, default="[]")
+    # JSON array of CaseFact IDs. related_facts is retained for historical records.
+    related_fact_ids = Column(Text, default="[]")
     issue_version = Column(Integer, default=1)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)

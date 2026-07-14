@@ -8,7 +8,7 @@ import { api, CaseItem } from "@/lib/api";
 
 export default function NewAICasePage() {
   const router = useRouter();
-  const [form, setForm] = useState({ title: "", claimant: "", employer: "", fact_text: "" });
+  const [form, setForm] = useState({ title: "", claimant: "", employer: "", case_type: "劳动争议", fact_text: "" });
   const [files, setFiles] = useState<File[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -30,6 +30,7 @@ export default function NewAICasePage() {
       body.append("title", form.title.trim());
       body.append("claimant", form.claimant.trim() || "待识别");
       body.append("employer", form.employer.trim() || "待识别");
+      body.append("case_type", form.case_type);
       body.append("fact_text", form.fact_text.trim());
       files.forEach((file) => body.append("files", file));
       const created = await api<CaseItem>("/ai-cases", { method: "POST", body });
@@ -50,14 +51,15 @@ export default function NewAICasePage() {
           <div><h1 className="text-xl font-semibold text-ink">新建 AI 案件</h1><p className="mt-1 text-sm leading-6 text-slate-600">提交现场事实或材料后，系统会立即创建事实提取工作单元，并生成等待人工确认的结构化事实。</p></div>
         </div>
         <form className="mt-6 space-y-5" onSubmit={submit}>
-          <div className="grid gap-4 sm:grid-cols-3">
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
             <Field label="案件名称" value={form.title} required onChange={(value) => setForm({ ...form, title: value })} placeholder="例如：李某诉某公司劳动争议" />
             <Field label="申请人" value={form.claimant} onChange={(value) => setForm({ ...form, claimant: value })} placeholder="可留空，由材料识别" />
             <Field label="被申请人" value={form.employer} onChange={(value) => setForm({ ...form, employer: value })} placeholder="可留空，由材料识别" />
+            <label className="block"><span className="text-xs font-medium text-slate-600">案件类型</span><select className="mt-1 w-full rounded-md border border-line bg-white px-3 py-2 text-sm" value={form.case_type} onChange={(event) => setForm({ ...form, case_type: event.target.value })}>{["合同纠纷", "公司纠纷", "知识产权", "劳动争议", "其他"].map((item) => <option key={item}>{item}</option>)}</select></label>
           </div>
           <label className="block">
-            <span className="text-sm font-medium text-ink">现场案件事实</span>
-            <textarea className="mt-2 min-h-56 w-full rounded-md border border-line px-3 py-3 text-sm leading-6" value={form.fact_text} onChange={(event) => setForm({ ...form, fact_text: event.target.value })} placeholder="粘贴当事人陈述、时间经过、工资或解除情况。系统会以这段新输入为分析来源。" />
+            <span className="text-sm font-medium text-ink">原始案件事实</span>
+            <textarea className="mt-2 min-h-56 w-full rounded-md border border-line px-3 py-3 text-sm leading-6" value={form.fact_text} onChange={(event) => setForm({ ...form, fact_text: event.target.value })} placeholder="粘贴当事人陈述、关键经过、时间节点和已有材料。系统会保留该原文，并以其为分析来源。" />
           </label>
           <div className="rounded-md border border-dashed border-line bg-slate-50 p-4">
             <div className="flex flex-wrap items-center justify-between gap-3"><div className="flex items-center gap-2 text-sm text-slate-700"><FileUp size={18} className="text-court" />支持 PDF、DOCX、TXT，可与现场事实同时提交。</div><label className="button-secondary cursor-pointer"><FileUp size={16} />选择材料<input className="hidden" type="file" accept=".pdf,.docx,.txt" multiple onChange={pickFiles} /></label></div>

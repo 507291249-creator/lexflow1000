@@ -38,3 +38,4 @@
 - `UPLOAD_DIR`：上传解析文件的临时目录。
 - `OPENAI_API_KEY`：真实 LLM 的服务端密钥，不要设置到 Vercel 或任何 `NEXT_PUBLIC_` 变量中。
 - `OPENAI_MODEL`：可选的 OpenAI 模型名称，默认 `gpt-4o-mini`。
+- `ALLOW_LOCAL_AI_FALLBACK`：本地可设为 `true` 以启用明确标记的备用解析；生产环境建议设为 `false`，让模型配置、调用或结构校验问题以“失败并可重试”的工作单元状态呈现。

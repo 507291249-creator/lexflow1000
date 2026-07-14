@@ -17,6 +17,7 @@ from .agents.evidence_agent import generate_evidences
 from .agents.legal_memory import memory_from_trace
 from .agents.p0_workflow import STANDARD_WORKFLOW, analysis_content, mock_facts, mock_issues, structured_analysis
 from .agents.p1_workflow import P1_INITIAL_WORKFLOW, fact_extraction, issue_identification, legal_analysis, render_analysis
+from .agents.llm_provider import StructuredOutputError
 from .agents.research_agent import generate_analysis
 from .agents.risk_agent import generate_risk
 from .agents.similarity_search import recommend_memories
@@ -59,6 +60,7 @@ def ensure_existing_schema() -> None:
         "cases": {
             "case_no": "TEXT NOT NULL DEFAULT ''",
             "case_type": "TEXT NOT NULL DEFAULT '劳动仲裁'",
+            "raw_facts": "TEXT NOT NULL DEFAULT ''",
             "stage": "TEXT NOT NULL DEFAULT '材料收集'",
             "handler": "TEXT NOT NULL DEFAULT ''",
             "next_follow_up_at": "TEXT NOT NULL DEFAULT ''",
@@ -97,6 +99,7 @@ def ensure_existing_schema() -> None:
         "case_issues": {
             "importance": "TEXT NOT NULL DEFAULT '中'",
             "related_facts": "TEXT NOT NULL DEFAULT '[]'",
+            "related_fact_ids": "TEXT NOT NULL DEFAULT '[]'",
             "issue_version": "INTEGER NOT NULL DEFAULT 1",
         },
     }
@@ -209,13 +212,16 @@ def serialize_document(document: models.Document) -> dict:
 
 
 def serialize_output(output: models.AIOutput) -> dict:
+    meta = from_json(output.meta_json, {})
+    llm = meta.get("llm") or (meta.get("structured") or {}).get("_llm", {})
     return {
         "id": output.id,
         "case_id": output.case_id,
         "output_type": output.output_type,
         "title": output.title,
         "content": output.content,
-        "meta_json": from_json(output.meta_json, {}),
+        "meta_json": meta,
+        "execution_mode": llm.get("execution_mode", "fallback" if llm.get("provider") == "local-fallback" else "llm"),
         "work_unit_id": output.work_unit_id,
         "review_status": output.review_status,
         "version": output.version,
@@ -311,6 +317,7 @@ def serialize_issue(item: models.CaseIssue) -> dict:
         "status": item.status,
         "importance": item.importance,
         "related_facts": from_json(item.related_facts, []),
+        "related_fact_ids": [str(value) for value in from_json(item.related_fact_ids, [])],
         "issue_version": item.issue_version,
         "created_at": item.created_at,
         "updated_at": item.updated_at,
@@ -372,7 +379,9 @@ def current_issues(db: Session, case: models.Case) -> list[models.CaseIssue]:
 def case_material_text(db: Session, case: models.Case) -> str:
     documents = db.query(models.Document).filter(models.Document.case_id == case.id).all()
     parts = [f"[{item.filename}]\n{item.raw_text}" for item in documents if item.raw_text]
-    if case.summary and case.summary not in "\n".join(parts):
+    if case.raw_facts and case.raw_facts not in "\n".join(parts):
+        parts.insert(0, f"[用户原始事实]\n{case.raw_facts}")
+    elif case.summary and case.summary not in "\n".join(parts):
         parts.insert(0, f"[案件登记]\n{case.summary}")
     return "\n\n".join(parts) or "尚未提供可解析的案件事实。"
 
@@ -382,6 +391,25 @@ def next_output_version(db: Session, unit: models.WorkUnit) -> int:
         models.AIOutput.work_unit_id == unit.id
     ).order_by(models.AIOutput.version.desc()).first()
     return (latest[0] if latest else 0) + 1
+
+
+def validate_related_fact_ids(case: models.Case, values: list[str], db: Session) -> list[str]:
+    available = {str(item.id) for item in current_facts(db, case) if item.status != "已驳回"}
+    normalized = [str(value).strip() for value in values if str(value).strip()]
+    invalid = [value for value in normalized if value not in available]
+    if invalid:
+        raise HTTPException(status_code=400, detail=f"关联事实 ID 不存在或已驳回：{', '.join(invalid)}")
+    return list(dict.fromkeys(normalized))
+
+
+def mark_work_unit_failed(db: Session, case: models.Case, unit: models.WorkUnit, error: StructuredOutputError) -> models.WorkUnit:
+    unit.status = "失败"
+    unit.output_json = to_json({
+        "error": {"code": error.code, "message": str(error), "attempts": error.attempts},
+        "retryable": True,
+    })
+    log_event(db, case.id, "structured_ai_failed", f"{unit.title} 执行失败，可重新运行", {"work_unit_id": unit.id, "code": error.code})
+    return unit
 
 
 def invalidate_analysis_units(db: Session, case: models.Case) -> None:
@@ -425,7 +453,10 @@ def run_ai_fact_extraction(db: Session, case: models.Case, unit: models.WorkUnit
     existing = current_facts(db, case)
     if existing:
         case.fact_version += 1
-    result = fact_extraction(case, case_material_text(db, case))
+    try:
+        result = fact_extraction(case, case_material_text(db, case))
+    except StructuredOutputError as error:
+        return mark_work_unit_failed(db, case, unit, error)
     case.summary = result.get("case_summary") or case.summary
     parties = result.get("parties", {})
     if case.claimant in {"", "待识别"}:
@@ -460,7 +491,7 @@ def run_ai_fact_extraction(db: Session, case: models.Case, unit: models.WorkUnit
         output_type="fact_extraction",
         title="AI 事实提取",
         content=json.dumps(result, ensure_ascii=False, indent=2),
-        meta_json=to_json({"structured": result}),
+        meta_json=to_json({"structured": result, "llm": result.get("_llm", {})}),
         review_status="待复核",
         version=next_output_version(db, unit),
         fact_version=case.fact_version,
@@ -483,7 +514,18 @@ def run_ai_issue_identification(db: Session, case: models.Case, unit: models.Wor
     if current_issues(db, case):
         case.issue_version += 1
     facts = current_facts(db, case)
-    result = issue_identification(case, facts)
+    try:
+        result = issue_identification(case, facts)
+    except StructuredOutputError as error:
+        return mark_work_unit_failed(db, case, unit, error)
+    try:
+        for item in result.get("issues", []):
+            item["related_fact_ids"] = validate_related_fact_ids(case, item.get("related_fact_ids") or [], db)
+    except HTTPException as error:
+        return mark_work_unit_failed(
+            db, case, unit,
+            StructuredOutputError(error.detail, code="invalid_related_fact_ids", attempts=1),
+        )
     for item in result.get("issues", []):
         db.add(models.CaseIssue(
             case_id=case.id,
@@ -494,7 +536,8 @@ def run_ai_issue_identification(db: Session, case: models.Case, unit: models.Wor
             source="AI建议",
             status="AI建议",
             importance=item.get("importance") or "中",
-            related_facts=to_json(item.get("related_facts") or []),
+            related_facts=to_json([]),
+            related_fact_ids=to_json(item.get("related_fact_ids") or []),
             issue_version=case.issue_version,
         ))
     db.flush()
@@ -504,7 +547,7 @@ def run_ai_issue_identification(db: Session, case: models.Case, unit: models.Wor
         output_type="issue_identification",
         title="AI 争点识别",
         content=json.dumps(result, ensure_ascii=False, indent=2),
-        meta_json=to_json({"structured": result}),
+        meta_json=to_json({"structured": result, "llm": result.get("_llm", {})}),
         review_status="待复核",
         version=next_output_version(db, unit),
         fact_version=case.fact_version,
@@ -560,7 +603,10 @@ def run_ai_legal_analysis(db: Session, case: models.Case, unit: models.WorkUnit,
     facts = [item for item in current_facts(db, case) if item.status == "已确认"]
     memories = db.query(models.LegalMemory).filter(models.LegalMemory.status == "已沉淀").all()
     memory_context = recommend_memories(case, memories, limit=3)
-    result = legal_analysis(case, issue, facts, memory_context, supplementary_material)
+    try:
+        result = legal_analysis(case, issue, facts, memory_context, supplementary_material)
+    except StructuredOutputError as error:
+        return mark_work_unit_failed(db, case, unit, error)
     snapshot = {
         "fact_version": case.fact_version,
         "issue_version": case.issue_version,
@@ -750,6 +796,8 @@ def health() -> dict:
 @app.post("/cases", response_model=schemas.CaseOut)
 def create_case(payload: schemas.CaseCreate, db: Session = Depends(get_db)):
     case = models.Case(**payload.model_dump())
+    if not case.raw_facts:
+        case.raw_facts = case.summary
     db.add(case)
     db.commit()
     db.refresh(case)
@@ -764,6 +812,7 @@ def create_ai_case(
     title: str = Form(...),
     claimant: str = Form("待识别"),
     employer: str = Form("待识别"),
+    case_type: str = Form("劳动争议"),
     fact_text: str = Form(""),
     files: list[UploadFile] = File(default=[]),
     db: Session = Depends(get_db),
@@ -775,6 +824,8 @@ def create_ai_case(
         claimant=claimant.strip() or "待识别",
         employer=employer.strip() or "待识别",
         summary=fact_text.strip(),
+        raw_facts=fact_text.strip(),
+        case_type=case_type.strip() or "其他",
         status="fact_review",
         stage="事实确认",
         next_action="确认 AI 提取的案件事实后进入争点识别。",
@@ -1104,6 +1155,7 @@ def add_issue(case_id: int, payload: schemas.IssueCreate, db: Session = Depends(
         status="人工确认",
         importance=payload.importance,
         related_facts=to_json(payload.related_facts),
+        related_fact_ids=to_json(validate_related_fact_ids(case, payload.related_fact_ids, db)),
         issue_version=case.issue_version,
     )
     if case.workflow_mode == "ai_case":
@@ -1144,6 +1196,8 @@ def update_issue(issue_id: int, payload: schemas.IssueUpdate, db: Session = Depe
     issue.status = payload.status
     issue.importance = payload.importance
     issue.related_facts = to_json(payload.related_facts)
+    if payload.related_fact_ids:
+        issue.related_fact_ids = to_json(validate_related_fact_ids(case, payload.related_fact_ids, db))
     if case.workflow_mode == "ai_case":
         advance_issue_version(db, case)
         issue.issue_version = case.issue_version
