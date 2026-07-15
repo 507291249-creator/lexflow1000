@@ -1,4 +1,5 @@
 import json
+from datetime import date, datetime
 from typing import Any, Optional, Union
 
 from sqlalchemy.orm import Session
@@ -7,7 +8,15 @@ from . import models
 
 
 def to_json(value: Any) -> str:
-    return json.dumps(value, ensure_ascii=False)
+    return json.dumps(value, ensure_ascii=False, default=_json_default)
+
+
+def _json_default(value: Any) -> Any:
+    if isinstance(value, (datetime, date)):
+        return value.isoformat()
+    if hasattr(value, "model_dump"):
+        return value.model_dump(mode="json")
+    raise TypeError(f"Object of type {value.__class__.__name__} is not JSON serializable")
 
 
 def from_json(value: Optional[str], default: Any = None) -> Any:
