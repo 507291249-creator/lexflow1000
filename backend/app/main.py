@@ -780,6 +780,7 @@ def record_human_trace(
     human_revision: str,
     reason: str,
     work_unit_id: int | None = None,
+    ai_output_id: int | None = None,
     tags: list[str] | None = None,
 ) -> models.DecisionTrace:
     trace = models.DecisionTrace(
@@ -789,6 +790,7 @@ def record_human_trace(
         revision_reason=reason,
         tags=join_tags(tags or [object_type, action]),
         work_unit_id=work_unit_id,
+        ai_output_id=ai_output_id,
         action=action,
         object_type=object_type,
         object_id=object_id,
@@ -1110,6 +1112,10 @@ def review_fact(fact_id: int, payload: schemas.FactReview, db: Session = Depends
     status_map = {"接受": "已确认", "修改": "已确认", "驳回": "已驳回"}
     if payload.action not in status_map:
         raise HTTPException(status_code=400, detail="不支持的事实操作")
+    if payload.action == "接受" and fact.status == "已确认" and fact.human_fact == fact.ai_fact:
+        return serialize_fact(fact)
+    if payload.action == "驳回" and fact.status == "已驳回":
+        return serialize_fact(fact)
     fact.status = status_map[payload.action]
     if payload.action == "修改":
         fact.human_fact = payload.human_fact.strip()
@@ -1144,7 +1150,7 @@ def confirm_all_facts(case_id: int, payload: schemas.BatchReview, db: Session = 
     case = require_case(db, case_id)
     facts = [item for item in current_facts(db, case) if item.status == "待确认"]
     if not facts:
-        raise HTTPException(status_code=400, detail="没有待确认的事实")
+        return [serialize_fact(item) for item in current_facts(db, case)]
     if case.workflow_mode == "ai_case":
         advance_fact_version(db, case)
     for fact in facts:
@@ -1267,14 +1273,18 @@ def issue_action(issue_id: int, payload: schemas.IssueAction, db: Session = Depe
     if not issue:
         raise HTTPException(status_code=404, detail="未找到争点")
     case = require_case(db, issue.case_id)
-    if payload.action == "确认":
-        issue.status = "人工确认"
-    elif payload.action == "开始分析":
-        issue.status = "分析中"
-    elif payload.action == "完成":
-        issue.status = "已完成"
-    else:
+    status_map = {"确认": "人工确认", "开始分析": "分析中", "完成": "已完成"}
+    target_status = status_map.get(payload.action)
+    if not target_status:
         raise HTTPException(status_code=400, detail="不支持的争点操作")
+    if case.workflow_mode == "ai_case" and issue.issue_version != case.issue_version:
+        raise HTTPException(status_code=409, detail="争点版本已更新，请重新加载案件后再操作")
+    if issue.status == target_status:
+        if case.workflow_mode == "ai_case" and payload.action == "确认":
+            sync_analysis_units(db, case)
+            db.commit()
+        return serialize_issue(issue)
+    issue.status = target_status
     if case.workflow_mode == "ai_case":
         advance_issue_version(db, case)
         issue.issue_version = case.issue_version
@@ -1305,7 +1315,10 @@ def confirm_all_issues(case_id: int, payload: schemas.BatchReview, db: Session =
         raise HTTPException(status_code=400, detail="请先确认事实，再批量确认争点")
     issues = [item for item in current_issues(db, case) if item.status == "AI建议"]
     if not issues:
-        raise HTTPException(status_code=400, detail="没有待确认的 AI 争点")
+        if case.workflow_mode == "ai_case":
+            sync_analysis_units(db, case)
+            db.commit()
+        return [serialize_issue(item) for item in current_issues(db, case)]
     if case.workflow_mode == "ai_case":
         advance_issue_version(db, case)
     for issue in issues:
@@ -1376,6 +1389,10 @@ def review_ai_output(output_id: int, payload: schemas.AIReview, db: Session = De
     if not output:
         raise HTTPException(status_code=404, detail="未找到 AI 输出")
     case = require_case(db, output.case_id)
+    if payload.action == "接受" and output.review_status == "已接受":
+        return serialize_output(output)
+    if payload.action == "驳回" and output.review_status == "已驳回":
+        return serialize_output(output)
     if payload.action == "接受":
         output.review_status = "已接受"
         human_revision = output.content
@@ -1396,6 +1413,7 @@ def review_ai_output(output_id: int, payload: schemas.AIReview, db: Session = De
             db,
             case_id=case.id,
             work_unit_id=unit.id,
+            ai_output_id=output.id,
             action=payload.action,
             object_type="AI输出",
             object_id=output.id,
@@ -1430,6 +1448,7 @@ def review_ai_output(output_id: int, payload: schemas.AIReview, db: Session = De
         action=payload.action,
         object_type="AI输出",
         object_id=output.id,
+        ai_output_id=output.id,
         ai_suggestion=output.content,
         human_revision=human_revision,
         reason=payload.reason,
@@ -1442,6 +1461,51 @@ def review_ai_output(output_id: int, payload: schemas.AIReview, db: Session = De
     db.commit()
     db.refresh(output)
     return serialize_output(output)
+
+
+@app.post("/cases/{case_id}/analyses/confirm-all", response_model=list[schemas.AIOutputOut])
+def confirm_all_analyses(case_id: int, payload: schemas.BatchReview, db: Session = Depends(get_db)):
+    case = require_case(db, case_id)
+    current_issue_ids = {item.id for item in current_issues(db, case) if item.status == "人工确认"}
+    units = db.query(models.WorkUnit).filter(
+        models.WorkUnit.case_id == case.id,
+        models.WorkUnit.code.like("legal_analysis:%"),
+    ).all()
+    units = [unit for unit in units if unit.parent_issue_id in current_issue_ids]
+    current_outputs: list[models.AIOutput] = []
+    for unit in units:
+        output = db.query(models.AIOutput).filter(
+            models.AIOutput.work_unit_id == unit.id,
+            models.AIOutput.output_type == "legal_analysis",
+            models.AIOutput.fact_version == case.fact_version,
+            models.AIOutput.issue_version == case.issue_version,
+        ).order_by(models.AIOutput.version.desc()).first()
+        if output:
+            current_outputs.append(output)
+
+    pending = [output for output in current_outputs if output.review_status == "待复核"]
+    for output in pending:
+        output.review_status = "已接受"
+        unit = next((item for item in units if item.id == output.work_unit_id), None)
+        if unit:
+            unit.status = "已批准"
+        record_human_trace(
+            db,
+            case_id=case.id,
+            work_unit_id=output.work_unit_id,
+            ai_output_id=output.id,
+            action="批量接受",
+            object_type="AI输出",
+            object_id=output.id,
+            ai_suggestion=output.content,
+            human_revision=output.content,
+            reason=payload.reason,
+            tags=["AI复核", "批量确认"],
+        )
+    if pending:
+        log_event(db, case.id, "analyses_confirmed_in_batch", "已批量接受当前版本法律分析", {"count": len(pending)})
+    db.commit()
+    return [serialize_output(output) for output in current_outputs]
 
 
 @app.post("/work-units/{work_unit_id}/memory-candidate", response_model=schemas.MemoryOut)
