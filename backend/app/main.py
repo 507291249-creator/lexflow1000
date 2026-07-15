@@ -735,7 +735,13 @@ def execute_ai_case_work_unit(db: Session, case: models.Case, unit: models.WorkU
     raise HTTPException(status_code=400, detail="该 AI 案件工作单元暂不支持直接运行")
 
 
-def maybe_generate_issues_after_fact_review(db: Session, case: models.Case) -> None:
+def prepare_issue_identification_after_fact_review(db: Session, case: models.Case) -> None:
+    """Create the next task after fact review without issuing an LLM request.
+
+    Fact confirmation is often performed through several quick UI actions. Running
+    issue identification from every fact-review request can create a burst of
+    duplicate provider calls before the first request has completed.
+    """
     if case.workflow_mode != "ai_case" or not facts_are_confirmed(db, case):
         return
     existing = current_issues(db, case)
@@ -756,7 +762,7 @@ def maybe_generate_issues_after_fact_review(db: Session, case: models.Case) -> N
         )
         db.add(unit)
         db.flush()
-    run_ai_issue_identification(db, case, unit)
+    log_event(db, case.id, "issue_identification_ready", "事实已确认，可手动运行争点识别", {"work_unit_id": unit.id})
 
 
 def record_human_trace(
@@ -1123,7 +1129,7 @@ def review_fact(fact_id: int, payload: schemas.FactReview, db: Session = Depends
         tags=["事实结构化", payload.action],
     )
     log_event(db, fact.case_id, "fact_reviewed", f"事实已{payload.action}", {"fact_id": fact.id})
-    maybe_generate_issues_after_fact_review(db, case)
+    prepare_issue_identification_after_fact_review(db, case)
     db.commit()
     db.refresh(fact)
     return serialize_fact(fact)

@@ -129,6 +129,14 @@ def generate_structured(
             )
             if local_fallback_allowed():
                 return _validated_fallback(fallback, output_model, error=str(exc)[:180])
+            error_text = str(exc)
+            status_code = getattr(exc, "status_code", None)
+            if status_code == 429 or "code': '1302'" in error_text or 'code": "1302"' in error_text:
+                raise StructuredOutputError(
+                    "模型服务当前触发速率限制，请等待片刻后只重试一次。",
+                    code="llm_rate_limited",
+                    attempts=attempt,
+                ) from exc
             raise StructuredOutputError(
                 f"{provider.name} 模型调用失败（{type(exc).__name__}），请查看 Render 日志。",
                 code="llm_execution_failed",
