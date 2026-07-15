@@ -45,6 +45,9 @@ const statusClass: Record<string, string> = {
 
 function requestErrorMessage(error: unknown) {
   if (!(error instanceof Error)) return "操作未完成，请重试。";
+  if (error.message === "Failed to fetch" || error.message.toLowerCase().includes("networkerror")) {
+    return "暂时无法连接后端服务。请等待 Render 服务唤醒，或检查前端地址是否已加入后端跨域配置。";
+  }
   try {
     const detail = (JSON.parse(error.message) as { detail?: string }).detail;
     return detail || error.message;
@@ -70,15 +73,23 @@ export default function CaseDetailPage({ params }: { params: { id: string } }) {
   const [supplement, setSupplement] = useState("");
   const [memoryEdit, setMemoryEdit] = useState<MemoryItem | null>(null);
 
-  const load = async () => {
-    try {
-      const data = await api<CaseWorkspace>(`/cases/${caseId}/workspace`);
-      setWorkspace(data);
-      setSelectedUnitId((current) => current || data.work_units[0]?.id || null);
-      setError("");
-    } catch {
-      setError("案件工作台暂时无法读取，请确认后端服务已启动后重试。");
+  const load = async (): Promise<boolean> => {
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      try {
+        const data = await api<CaseWorkspace>(`/cases/${caseId}/workspace`);
+        setWorkspace(data);
+        setSelectedUnitId((current) => current || data.work_units[0]?.id || null);
+        setError("");
+        return true;
+      } catch (loadError) {
+        if (attempt === 0) {
+          await new Promise((resolve) => window.setTimeout(resolve, 700));
+          continue;
+        }
+        setError(requestErrorMessage(loadError));
+      }
     }
+    return false;
   };
 
   useEffect(() => { void load(); }, [caseId]);
@@ -126,7 +137,7 @@ export default function CaseDetailPage({ params }: { params: { id: string } }) {
     }
   }
 
-  if (!workspace) return <div className="card p-6 text-sm text-slate-500">正在加载案件工作台...</div>;
+  if (!workspace) return <div className="card p-6 text-sm text-slate-600">{error ? <div className="flex flex-wrap items-center justify-between gap-3"><span>{error}</span><button className="button-secondary" type="button" onClick={() => void load()}><RefreshCw size={16} />重新加载案件</button></div> : "正在加载案件工作台..."}</div>;
 
   if (workspace.case.workflow_mode === "ai_case") {
     return <AiCaseWorkspace caseId={caseId} workspace={workspace} onReload={load} />;
@@ -264,7 +275,7 @@ export default function CaseDetailPage({ params }: { params: { id: string } }) {
   );
 }
 
-function AiCaseWorkspace({ caseId, workspace, onReload }: { caseId: number; workspace: CaseWorkspace; onReload: () => Promise<void> }) {
+function AiCaseWorkspace({ caseId, workspace, onReload }: { caseId: number; workspace: CaseWorkspace; onReload: () => Promise<boolean> }) {
   const [tab, setTab] = useState<Tab>("工作流");
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
@@ -279,18 +290,29 @@ function AiCaseWorkspace({ caseId, workspace, onReload }: { caseId: number; work
   const latestFactOutput = workspace.ai_outputs.filter((item) => item.output_type === "fact_extraction").sort((a, b) => b.version - a.version)[0];
   const latestIssueOutput = workspace.ai_outputs.filter((item) => item.output_type === "issue_identification").sort((a, b) => b.version - a.version)[0];
   const factsConfirmed = workspace.facts.length > 0 && workspace.facts.every((item) => item.status !== "待确认") && workspace.facts.some((item) => item.status === "已确认");
+  const issueRunPath = issueUnit ? `/cases/${caseId}/work-units/${issueUnit.id}/run` : "";
 
   async function request(path: string, method = "POST", body?: unknown) {
     setBusy(path);
     setError("");
     try {
       await api(path, body === undefined ? { method } : { method, body: JSON.stringify(body) });
-      await onReload();
+      const refreshed = await onReload();
+      if (!refreshed) {
+        setError("操作已提交，但案件数据暂时未能刷新。请点击“重新加载案件数据”查看最新结果。");
+      }
     } catch (requestError) {
       setError(requestErrorMessage(requestError));
     } finally {
       setBusy("");
     }
+  }
+
+  async function reloadWorkspace() {
+    setBusy("reload-workspace");
+    const refreshed = await onReload();
+    setError(refreshed ? "" : "案件数据仍未能读取。请稍后再试，并检查 Render 的跨域配置和服务状态。");
+    setBusy("");
   }
 
   async function upload(event: ChangeEvent<HTMLInputElement>) {
@@ -316,7 +338,7 @@ function AiCaseWorkspace({ caseId, workspace, onReload }: { caseId: number; work
         {factUnit && <button className="button-secondary" type="button" disabled={busy === `/cases/${caseId}/work-units/${factUnit.id}/run`} onClick={() => request(`/cases/${caseId}/work-units/${factUnit.id}/run`)}><RefreshCw size={16} />{busy === `/cases/${caseId}/work-units/${factUnit.id}/run` ? "正在运行" : "重新提取事实"}</button>}
       </div>
       <div className="border-b border-line"><div className="flex min-w-max gap-1 overflow-x-auto pb-2">{tabs.map((item) => <button key={item} type="button" onClick={() => setTab(item)} className={tab === item ? "rounded-md bg-court px-3 py-2 text-sm font-medium text-white" : "rounded-md px-3 py-2 text-sm text-slate-600 hover:bg-slate-100"}>{item}</button>)}</div></div>
-      {error && <div role="alert" className="border-l-2 border-amber-500 bg-amber-50 px-4 py-3 text-sm text-amber-800">{error}</div>}
+      {error && <div role="alert" className="flex flex-wrap items-center justify-between gap-3 border-l-2 border-amber-500 bg-amber-50 px-4 py-3 text-sm text-amber-800"><span>{error}</span><button className="button-secondary" type="button" disabled={Boolean(busy)} onClick={() => void reloadWorkspace()}><RefreshCw size={16} />{busy === "reload-workspace" ? "正在加载" : "重新加载案件数据"}</button></div>}
 
       {tab === "概览" && <AiOverview workspace={workspace} factsConfirmed={factsConfirmed} analysisCount={analysisUnits.length} onOpen={setTab} />}
 
@@ -326,7 +348,7 @@ function AiCaseWorkspace({ caseId, workspace, onReload }: { caseId: number; work
 
       {tab === "事实" && <section className="space-y-4"><AiExtractionSummary output={latestFactOutput} outputs={workspace.ai_outputs.filter((item) => item.output_type === "fact_extraction")} /><div className="flex flex-wrap items-center justify-between gap-3"><p className="text-sm text-slate-600">可先一键确认全部 AI 提取事实，再按需要逐项修改或驳回。</p><button className="button-primary" type="button" disabled={Boolean(busy) || !workspace.facts.some((item) => item.status === "待确认")} onClick={() => request(`/cases/${caseId}/facts/confirm-all`, "POST", { reason: "人工复核 AI 提取事实后批量确认，后续按需逐项修订。" })}><Check size={16} />一键确认全部事实</button></div><div className="grid gap-4 lg:grid-cols-2">{workspace.facts.map((fact) => <AiFactCard key={fact.id} fact={fact} onAccept={() => request(`/facts/${fact.id}/review`, "POST", { action: "接受", reason: "人工核验现场材料后确认该事实。" })} onReject={() => request(`/facts/${fact.id}/review`, "POST", { action: "驳回", reason: "材料不足以支持该事实。" })} onEdit={() => setFactEdit(fact)} />)}</div>{factEdit && <AiFactEditor fact={factEdit} onClose={() => setFactEdit(null)} onSave={(text, reason) => request(`/facts/${factEdit.id}/review`, "POST", { action: "修改", human_fact: text, reason }).then(() => setFactEdit(null))} />}</section>}
 
-      {tab === "争点" && <section className="space-y-4"><AiIssueSummary output={latestIssueOutput} factsConfirmed={factsConfirmed} /><div className="flex flex-wrap items-center justify-between gap-3"><div><h2 className="text-lg font-semibold text-ink">已识别争点</h2><p className="mt-1 text-sm text-slate-600">可一键确认 AI 建议；确认后会动态创建对应的法律分析任务。</p></div><div className="flex flex-wrap gap-2"><button className="button-primary" type="button" disabled={Boolean(busy) || !workspace.issues.some((item) => item.status === "AI建议")} onClick={() => request(`/cases/${caseId}/issues/confirm-all`, "POST", { reason: "人工复核 AI 争点建议后批量确认，后续按需逐项修订。" })}><Check size={16} />一键确认 AI 争点</button><button className="button-secondary" disabled={!factsConfirmed} onClick={() => setIssueEdit({ id: 0, case_id: caseId, work_unit_id: issueUnit?.id || null, title: "", description: "", analysis_hint: "", source: "人工新增", status: "人工确认", importance: "中", related_facts: [], related_fact_ids: [], issue_version: workspace.case.issue_version, created_at: "", updated_at: "" })}><Plus size={16} />新增争点</button></div></div><div className="space-y-3">{workspace.issues.map((issue) => <AiIssueCard key={issue.id} issue={issue} facts={workspace.facts} onConfirm={() => request(`/issues/${issue.id}/action`, "POST", { action: "确认", reason: "人工确认该争点需要进入法律分析。" })} onEdit={() => setIssueEdit(issue)} onDelete={() => request(`/issues/${issue.id}`, "DELETE", { action: "删除", reason: "人工判断该争点不适用。" })} />)}</div>{issueEdit && <AiIssueEditor issue={issueEdit} facts={workspace.facts} onClose={() => setIssueEdit(null)} onSave={(draft, reason) => { const payload = { title: draft.title, description: draft.description, analysis_hint: draft.analysis_hint, status: "人工确认", importance: draft.importance, related_facts: draft.related_facts, related_fact_ids: draft.related_fact_ids, reason }; return draft.id ? request(`/issues/${draft.id}`, "PATCH", payload).then(() => setIssueEdit(null)) : request(`/cases/${caseId}/issues`, "POST", payload).then(() => setIssueEdit(null)); }} />}</section>}
+      {tab === "争点" && <section className="space-y-4"><AiIssueSummary output={latestIssueOutput} factsConfirmed={factsConfirmed} /><div className="flex flex-wrap items-center justify-between gap-3"><div><h2 className="text-lg font-semibold text-ink">已识别争点</h2><p className="mt-1 text-sm text-slate-600">可一键确认 AI 建议；确认后会动态创建对应的法律分析任务。</p></div><div className="flex flex-wrap gap-2">{issueUnit && <button className="button-secondary" type="button" disabled={!factsConfirmed || busy === issueRunPath} onClick={() => request(issueRunPath)}><Play size={16} />{busy === issueRunPath ? "正在生成" : latestIssueOutput || workspace.issues.length ? "重新生成争点" : "生成 AI 争点"}</button>}<button className="button-primary" type="button" disabled={Boolean(busy) || !workspace.issues.some((item) => item.status === "AI建议")} onClick={() => request(`/cases/${caseId}/issues/confirm-all`, "POST", { reason: "人工复核 AI 争点建议后批量确认，后续按需逐项修订。" })}><Check size={16} />一键确认 AI 争点</button><button className="button-secondary" disabled={!factsConfirmed} onClick={() => setIssueEdit({ id: 0, case_id: caseId, work_unit_id: issueUnit?.id || null, title: "", description: "", analysis_hint: "", source: "人工新增", status: "人工确认", importance: "中", related_facts: [], related_fact_ids: [], issue_version: workspace.case.issue_version, created_at: "", updated_at: "" })}><Plus size={16} />新增争点</button></div></div><div className="space-y-3">{workspace.issues.map((issue) => <AiIssueCard key={issue.id} issue={issue} facts={workspace.facts} onConfirm={() => request(`/issues/${issue.id}/action`, "POST", { action: "确认", reason: "人工确认该争点需要进入法律分析。" })} onEdit={() => setIssueEdit(issue)} onDelete={() => request(`/issues/${issue.id}`, "DELETE", { action: "删除", reason: "人工判断该争点不适用。" })} />)}</div>{issueEdit && <AiIssueEditor issue={issueEdit} facts={workspace.facts} onClose={() => setIssueEdit(null)} onSave={(draft, reason) => { const payload = { title: draft.title, description: draft.description, analysis_hint: draft.analysis_hint, status: "人工确认", importance: draft.importance, related_facts: draft.related_facts, related_fact_ids: draft.related_fact_ids, reason }; return draft.id ? request(`/issues/${draft.id}`, "PATCH", payload).then(() => setIssueEdit(null)) : request(`/cases/${caseId}/issues`, "POST", payload).then(() => setIssueEdit(null)); }} />}</section>}
 
       {tab === "分析" && <section className="space-y-4"><div><h2 className="text-lg font-semibold text-ink">逐项法律分析</h2><p className="mt-1 text-sm text-slate-600">每个确认争点单独运行。重新运行会生成新的版本，并保留旧版本及其决策记录。</p></div>{analysisUnits.map((unit) => <AiAnalysisUnit key={unit.id} unit={unit} outputs={workspace.ai_outputs.filter((item) => item.work_unit_id === unit.id).sort((a, b) => b.version - a.version)} busy={busy} onRun={() => request(`/cases/${caseId}/work-units/${unit.id}/run`)} onReview={(output, action, human_revision, reason, supplementary_material) => request(`/ai-outputs/${output.id}/review`, "POST", { action, human_revision, reason, supplementary_material })} />)}{!analysisUnits.length && <div className="card p-6 text-sm text-slate-500">请先在“争点”中确认至少一个争点。</div>}</section>}
 

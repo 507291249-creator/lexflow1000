@@ -11,7 +11,7 @@
 2. 在 Render 中选择 New > Blueprint，并选择该仓库。
 3. Render 会读取根目录的 `render.yaml`，创建 `lexflow-api` 服务。
 4. 创建一个 Render Postgres 数据库，并将它的内部连接地址填入 `DATABASE_URL`。
-5. 将 `CORS_ORIGINS` 设置为 Vercel 的生产地址，例如 `https://your-project.vercel.app`。
+5. 将 `CORS_ORIGINS` 设置为 Vercel 的生产地址，例如 `https://your-project.vercel.app`。多个地址可使用逗号或空格分隔；如需允许 Vercel 预览地址，可另设 `CORS_ORIGIN_REGEX=https://.*\.vercel\.app`。
 6. 在 Render 后端服务中选择模型提供方并填入对应密钥；密钥仅保存在服务端，用于新建 AI 案件的事实提取、争点识别和法律分析。
    - OpenAI：`LLM_PROVIDER=openai`、`OPENAI_API_KEY`，可选 `OPENAI_MODEL=gpt-4o-mini`。
    - 智谱 AI：`LLM_PROVIDER=zhipu`、`ZHIPU_API_KEY`，可选 `ZHIPU_MODEL=glm-4-flash-250414`。
@@ -36,7 +36,8 @@
 后端可设置以下环境变量：
 
 - `DATABASE_URL`：PostgreSQL 连接地址；不设置时继续使用本地 SQLite。
-- `CORS_ORIGINS`：允许访问 API 的前端地址，多个地址使用逗号分隔。
+- `CORS_ORIGINS`：允许访问 API 的前端地址，多个地址可使用逗号或空格分隔。
+- `CORS_ORIGIN_REGEX`：可选的前端地址正则；需要使用 Vercel 预览部署时可设为 `https://.*\.vercel\.app`。
 - `UPLOAD_DIR`：上传解析文件的临时目录。
 - `LLM_PROVIDER`：模型提供方，支持 `openai`（默认）或 `zhipu`。
 - `OPENAI_API_KEY`、`OPENAI_MODEL`：OpenAI 的服务端密钥和模型名称，默认模型为 `gpt-4o-mini`。

@@ -1,5 +1,6 @@
 import json
 import os
+import re
 import shutil
 from datetime import datetime
 from pathlib import Path
@@ -33,9 +34,12 @@ UPLOAD_DIR.mkdir(exist_ok=True)
 app = FastAPI(title="LexFlow MVP API", version="0.1.0")
 
 cors_origins = [
-    item.strip()
-    for item in os.getenv("CORS_ORIGINS", "http://localhost:3000,http://127.0.0.1:3000").split(",")
-    if item.strip()
+    item
+    for item in re.split(
+        r"[,\s]+",
+        os.getenv("CORS_ORIGINS", "http://localhost:3000,http://127.0.0.1:3000").strip(),
+    )
+    if item
 ]
 
 app.add_middleware(
