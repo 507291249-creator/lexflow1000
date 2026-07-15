@@ -1,9 +1,12 @@
+from __future__ import annotations
+
 import json
 import os
 import re
 import shutil
 from datetime import datetime
 from pathlib import Path
+from typing import Optional
 
 from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
@@ -215,15 +218,27 @@ def serialize_document(document: models.Document) -> dict:
     }
 
 
-def serialize_output(output: models.AIOutput) -> dict:
+def serialize_output(output: models.AIOutput, db: Optional[Session] = None) -> dict:
     meta = from_json(output.meta_json, {})
     llm = meta.get("llm") or (meta.get("structured") or {}).get("_llm", {})
+    reviewed_content = output.content
+    if db is not None:
+        trace = db.query(models.DecisionTrace).filter(
+            models.DecisionTrace.ai_output_id == output.id,
+            models.DecisionTrace.action == "修改",
+        ).order_by(
+            models.DecisionTrace.created_at.desc(),
+            models.DecisionTrace.id.desc(),
+        ).first()
+        if trace and trace.human_revision:
+            reviewed_content = trace.human_revision
     return {
         "id": output.id,
         "case_id": output.case_id,
         "output_type": output.output_type,
         "title": output.title,
         "content": output.content,
+        "reviewed_content": reviewed_content,
         "meta_json": meta,
         "execution_mode": llm.get("execution_mode", "fallback" if llm.get("provider") == "local-fallback" else "llm"),
         "work_unit_id": output.work_unit_id,
@@ -488,6 +503,42 @@ def current_analysis_outputs(db: Session, case: models.Case) -> list[models.AIOu
     return outputs
 
 
+def latest_unit_output(
+    db: Session,
+    unit: models.WorkUnit,
+    output_type=None,
+):
+    query = db.query(models.AIOutput).filter(models.AIOutput.work_unit_id == unit.id)
+    if output_type:
+        query = query.filter(models.AIOutput.output_type == output_type)
+    return query.order_by(models.AIOutput.version.desc(), models.AIOutput.id.desc()).first()
+
+
+def require_current_analysis_output(
+    db: Session,
+    case: models.Case,
+    output: models.AIOutput,
+) -> models.WorkUnit:
+    unit = db.query(models.WorkUnit).filter(
+        models.WorkUnit.id == output.work_unit_id,
+        models.WorkUnit.case_id == case.id,
+    ).first()
+    if not unit or not unit.code.startswith("legal_analysis:"):
+        raise HTTPException(status_code=400, detail="该输出未关联逐项法律分析任务")
+    latest = latest_unit_output(db, unit, "legal_analysis")
+    if not latest or latest.id != output.id:
+        raise HTTPException(status_code=409, detail="该分析已成为历史版本，请切换到最新版本后再复核")
+    if output.fact_version != case.fact_version or output.issue_version != case.issue_version:
+        raise HTTPException(status_code=409, detail="事实或争点已更新，请重新运行该项法律分析后再复核")
+    current_issue_ids = {
+        item.id for item in current_issues(db, case)
+        if item.status in {"人工确认", "分析中", "已完成"}
+    }
+    if unit.parent_issue_id not in current_issue_ids:
+        raise HTTPException(status_code=409, detail="关联争点已更新，请重新加载案件并运行当前争点分析")
+    return unit
+
+
 def reconcile_ai_case_workflow(db: Session, case: models.Case) -> dict:
     """Keep aggregate work-unit states aligned with reviewed child records.
 
@@ -502,6 +553,7 @@ def reconcile_ai_case_workflow(db: Session, case: models.Case) -> dict:
             "approved_analysis_count": 0,
             "analysis_count": 0,
             "report_ready": False,
+            "report_current": False,
         }
 
     facts_confirmed = facts_are_confirmed(db, case)
@@ -531,12 +583,25 @@ def reconcile_ai_case_workflow(db: Session, case: models.Case) -> dict:
             unit.status = "需修改"
 
     approved_count = sum(item.review_status in approved_statuses for item in outputs)
+    approved_ids = {item.id for item in outputs if item.review_status in approved_statuses}
+    latest_report = db.query(models.AIOutput).filter(
+        models.AIOutput.case_id == case.id,
+        models.AIOutput.output_type == "legal_report",
+        models.AIOutput.fact_version == case.fact_version,
+        models.AIOutput.issue_version == case.issue_version,
+    ).order_by(models.AIOutput.version.desc(), models.AIOutput.id.desc()).first()
+    report_analysis_ids = set(from_json(latest_report.input_snapshot_json, {}).get("analysis_ids", [])) if latest_report else set()
+    report_current = bool(approved_ids and latest_report and report_analysis_ids == approved_ids)
+    report_unit = next((item for item in units if item.code == "legal_analysis_report"), None)
+    if report_unit and latest_report:
+        report_unit.status = "已完成" if report_current else "需重新生成"
     return {
         "facts_confirmed": facts_confirmed,
         "issues_confirmed": issues_confirmed,
         "approved_analysis_count": approved_count,
         "analysis_count": len(outputs),
         "report_ready": facts_confirmed and issues_confirmed and approved_count > 0,
+        "report_current": report_current,
     }
 
 
@@ -656,7 +721,10 @@ def run_ai_issue_identification(db: Session, case: models.Case, unit: models.Wor
 
 
 def sync_analysis_units(db: Session, case: models.Case) -> list[models.WorkUnit]:
-    confirmed = [item for item in current_issues(db, case) if item.status == "人工确认"]
+    confirmed = [
+        item for item in current_issues(db, case)
+        if item.status in {"人工确认", "分析中", "已完成"}
+    ]
     existing = {item.parent_issue_id: item for item in db.query(models.WorkUnit).filter(
         models.WorkUnit.case_id == case.id,
         models.WorkUnit.code.like("legal_analysis:%"),
@@ -678,7 +746,15 @@ def sync_analysis_units(db: Session, case: models.Case) -> list[models.WorkUnit]
             )
             db.add(unit)
             sequence += 1
+        else:
+            unit.title = f"法律分析：{issue.title}"
+            unit.description = "围绕已确认争点运行结构化法律分析。"
+            unit.input_json = to_json({"issue_id": issue.id})
         units.append(unit)
+    confirmed_ids = {item.id for item in confirmed}
+    for issue_id, unit in existing.items():
+        if issue_id not in confirmed_ids:
+            unit.status = "已失效"
     db.flush()
     return units
 
@@ -689,7 +765,7 @@ def run_ai_legal_analysis(db: Session, case: models.Case, unit: models.WorkUnit,
         models.CaseIssue.case_id == case.id,
         models.CaseIssue.issue_version == case.issue_version,
     ).first()
-    if not issue or issue.status != "人工确认":
+    if not issue or issue.status not in {"人工确认", "分析中", "已完成"}:
         raise HTTPException(status_code=400, detail="请先确认该争点，再运行法律分析")
     facts = [item for item in current_facts(db, case) if item.status == "已确认"]
     memories = db.query(models.LegalMemory).filter(models.LegalMemory.status == "已沉淀").all()
@@ -732,7 +808,7 @@ def reviewed_output_content(db: Session, output: models.AIOutput) -> str:
     trace = db.query(models.DecisionTrace).filter(
         models.DecisionTrace.ai_output_id == output.id,
         models.DecisionTrace.action == "修改",
-    ).order_by(models.DecisionTrace.created_at.desc()).first()
+    ).order_by(models.DecisionTrace.created_at.desc(), models.DecisionTrace.id.desc()).first()
     return trace.human_revision if trace else output.content
 
 
@@ -979,7 +1055,7 @@ def get_case(case_id: int, db: Session = Depends(get_db)):
         **schemas.CaseOut.model_validate(case).model_dump(mode="json"),
         "documents": [serialize_document(item) for item in case.documents],
         "evidences": case.evidences,
-        "ai_outputs": [serialize_output(item) for item in outputs],
+        "ai_outputs": [serialize_output(item, db) for item in outputs],
     }
 
 
@@ -1012,7 +1088,7 @@ def get_workspace(case_id: int, db: Session = Depends(get_db)):
         "work_units": [serialize_work_unit(item) for item in work_units],
         "facts": [serialize_fact(item) for item in facts],
         "issues": [serialize_issue(item) for item in issues],
-        "ai_outputs": [serialize_output(item) for item in outputs],
+        "ai_outputs": [serialize_output(item, db) for item in outputs],
         "traces": [serialize_trace(item) for item in traces],
         "memory_candidates": [serialize_memory(item) for item in candidates],
         "workflow_state": workflow_state,
@@ -1165,7 +1241,15 @@ def run_standard_workflow(case_id: int, db: Session = Depends(get_db)):
 
 @app.post("/cases/{case_id}/work-units/{work_unit_id}/review", response_model=schemas.WorkUnitOut)
 def review_work_unit(case_id: int, work_unit_id: int, payload: schemas.WorkUnitReview, db: Session = Depends(get_db)):
+    case = require_case(db, case_id)
     unit = require_work_unit(db, case_id, work_unit_id)
+    ai_output = None
+    if case.workflow_mode == "ai_case" and unit.code.startswith("legal_analysis:"):
+        ai_output = latest_unit_output(db, unit, "legal_analysis")
+        if not ai_output:
+            raise HTTPException(status_code=400, detail="请先运行当前争点的法律分析")
+        require_current_analysis_output(db, case, ai_output)
+        ai_output.review_status = "已接受" if payload.action == "批准" else "已驳回"
     unit.status = "已批准" if payload.action == "批准" else "需修改"
     unit.reviewer = payload.reviewer
     unit.reviewed_at = datetime.utcnow()
@@ -1176,11 +1260,13 @@ def review_work_unit(case_id: int, work_unit_id: int, payload: schemas.WorkUnitR
         action=payload.action,
         object_type="WorkUnit",
         object_id=unit.id,
-        ai_suggestion=from_json(unit.output_json, {}).get("summary", unit.title),
+        ai_output_id=ai_output.id if ai_output else None,
+        ai_suggestion=ai_output.content if ai_output else from_json(unit.output_json, {}).get("summary", unit.title),
         human_revision=unit.status,
         reason=payload.reason,
         tags=["工作单元", payload.action],
     )
+    reconcile_ai_case_workflow(db, case)
     log_event(db, case_id, "work_unit_reviewed", f"人工复核：{unit.title} {unit.status}")
     db.commit()
     db.refresh(unit)
@@ -1204,8 +1290,12 @@ def review_fact(fact_id: int, payload: schemas.FactReview, db: Session = Depends
     if payload.action not in status_map:
         raise HTTPException(status_code=400, detail="不支持的事实操作")
     if payload.action == "接受" and fact.status == "已确认" and fact.human_fact == fact.ai_fact:
+        reconcile_ai_case_workflow(db, case)
+        db.commit()
         return serialize_fact(fact)
     if payload.action == "驳回" and fact.status == "已驳回":
+        reconcile_ai_case_workflow(db, case)
+        db.commit()
         return serialize_fact(fact)
     fact.status = status_map[payload.action]
     if payload.action == "修改":
@@ -1319,6 +1409,7 @@ def add_issue(case_id: int, payload: schemas.IssueCreate, db: Session = Depends(
     log_event(db, case_id, "issue_added", f"已新增争点：{issue.title}")
     if case.workflow_mode == "ai_case":
         sync_analysis_units(db, case)
+        reconcile_ai_case_workflow(db, case)
     db.commit()
     db.refresh(issue)
     return serialize_issue(issue)
@@ -1337,8 +1428,7 @@ def update_issue(issue_id: int, payload: schemas.IssueUpdate, db: Session = Depe
     issue.status = payload.status
     issue.importance = payload.importance
     issue.related_facts = to_json(payload.related_facts)
-    if payload.related_fact_ids:
-        issue.related_fact_ids = to_json(validate_related_fact_ids(case, payload.related_fact_ids, db))
+    issue.related_fact_ids = to_json(validate_related_fact_ids(case, payload.related_fact_ids, db))
     if case.workflow_mode == "ai_case":
         advance_issue_version(db, case)
         issue.issue_version = case.issue_version
@@ -1357,6 +1447,7 @@ def update_issue(issue_id: int, payload: schemas.IssueUpdate, db: Session = Depe
     log_event(db, issue.case_id, "issue_updated", f"争点已修改：{issue.title}")
     if case.workflow_mode == "ai_case":
         sync_analysis_units(db, case)
+        reconcile_ai_case_workflow(db, case)
     db.commit()
     db.refresh(issue)
     return serialize_issue(issue)
@@ -1380,8 +1471,9 @@ def issue_action(issue_id: int, payload: schemas.IssueAction, db: Session = Depe
             reconcile_ai_case_workflow(db, case)
             db.commit()
         return serialize_issue(issue)
+    previous_status = issue.status
     issue.status = target_status
-    if case.workflow_mode == "ai_case":
+    if case.workflow_mode == "ai_case" and payload.action == "确认" and previous_status != "人工确认":
         advance_issue_version(db, case)
         issue.issue_version = case.issue_version
     record_human_trace(
@@ -1397,7 +1489,7 @@ def issue_action(issue_id: int, payload: schemas.IssueAction, db: Session = Depe
         tags=["争点识别", payload.action],
     )
     log_event(db, issue.case_id, "issue_action", f"争点状态更新为：{issue.status}")
-    if case.workflow_mode == "ai_case" and payload.action == "确认":
+    if case.workflow_mode == "ai_case":
         sync_analysis_units(db, case)
     reconcile_ai_case_workflow(db, case)
     db.commit()
@@ -1466,6 +1558,8 @@ def delete_issue(issue_id: int, payload: schemas.IssueAction, db: Session = Depe
     db.flush()
     if case.workflow_mode == "ai_case":
         advance_issue_version(db, case)
+        sync_analysis_units(db, case)
+        reconcile_ai_case_workflow(db, case)
     log_event(db, case_id, "issue_deleted", f"已删除争点：{title}")
     db.commit()
     return {"message": "争点已删除"}
@@ -1479,7 +1573,7 @@ def create_legal_analysis_report(case_id: int, db: Session = Depends(get_db)):
     output = generate_legal_report(db, case)
     db.commit()
     db.refresh(output)
-    return serialize_output(output)
+    return serialize_output(output, db)
 
 
 @app.post("/ai-outputs/{output_id}/review", response_model=schemas.AIOutputOut)
@@ -1488,13 +1582,24 @@ def review_ai_output(output_id: int, payload: schemas.AIReview, db: Session = De
     if not output:
         raise HTTPException(status_code=404, detail="未找到 AI 输出")
     case = require_case(db, output.case_id)
+    unit = None
+    if output.output_type == "legal_analysis":
+        unit = require_current_analysis_output(db, case, output)
     if payload.action == "接受" and output.review_status == "已接受":
-        return serialize_output(output)
+        if unit:
+            unit.status = "已批准"
+        reconcile_ai_case_workflow(db, case)
+        db.commit()
+        return serialize_output(output, db)
     if payload.action == "驳回" and output.review_status == "已驳回":
-        return serialize_output(output)
+        if unit:
+            unit.status = "需修改"
+        reconcile_ai_case_workflow(db, case)
+        db.commit()
+        return serialize_output(output, db)
     if payload.action == "接受":
         output.review_status = "已接受"
-        human_revision = output.content
+        human_revision = reviewed_output_content(db, output)
     elif payload.action == "修改":
         if not payload.human_revision.strip():
             raise HTTPException(status_code=400, detail="修改 AI 内容时需要填写人工版本")
@@ -1504,7 +1609,7 @@ def review_ai_output(output_id: int, payload: schemas.AIReview, db: Session = De
         output.review_status = "已驳回"
         human_revision = "已驳回该 AI 输出"
     elif payload.action == "补充材料后重新分析":
-        unit = db.query(models.WorkUnit).filter(models.WorkUnit.id == output.work_unit_id).first()
+        unit = unit or db.query(models.WorkUnit).filter(models.WorkUnit.id == output.work_unit_id).first()
         if not unit:
             raise HTTPException(status_code=400, detail="该输出未关联工作单元，无法重新分析")
         output.review_status = "待补充材料"
@@ -1536,7 +1641,7 @@ def review_ai_output(output_id: int, payload: schemas.AIReview, db: Session = De
         if not new_output:
             raise HTTPException(status_code=500, detail="重新生成 AI 输出失败")
         db.refresh(new_output)
-        return serialize_output(new_output)
+        return serialize_output(new_output, db)
     else:
         raise HTTPException(status_code=400, detail="不支持的 AI 复核操作")
 
@@ -1553,35 +1658,24 @@ def review_ai_output(output_id: int, payload: schemas.AIReview, db: Session = De
         reason=payload.reason,
         tags=["AI复核", payload.action],
     )
-    unit = db.query(models.WorkUnit).filter(models.WorkUnit.id == output.work_unit_id).first()
+    unit = unit or db.query(models.WorkUnit).filter(models.WorkUnit.id == output.work_unit_id).first()
     if unit and case.workflow_mode == "ai_case" and unit.code.startswith("legal_analysis:"):
         unit.status = "已批准" if payload.action in {"接受", "修改"} else "需修改"
     reconcile_ai_case_workflow(db, case)
     log_event(db, case.id, "ai_output_reviewed", f"AI 输出已{payload.action}", {"output_id": output.id})
     db.commit()
     db.refresh(output)
-    return serialize_output(output)
+    return serialize_output(output, db)
 
 
 @app.post("/cases/{case_id}/analyses/confirm-all", response_model=list[schemas.AIOutputOut])
 def confirm_all_analyses(case_id: int, payload: schemas.BatchReview, db: Session = Depends(get_db)):
     case = require_case(db, case_id)
-    current_issue_ids = {item.id for item in current_issues(db, case) if item.status == "人工确认"}
     units = db.query(models.WorkUnit).filter(
         models.WorkUnit.case_id == case.id,
         models.WorkUnit.code.like("legal_analysis:%"),
     ).all()
-    units = [unit for unit in units if unit.parent_issue_id in current_issue_ids]
-    current_outputs: list[models.AIOutput] = []
-    for unit in units:
-        output = db.query(models.AIOutput).filter(
-            models.AIOutput.work_unit_id == unit.id,
-            models.AIOutput.output_type == "legal_analysis",
-            models.AIOutput.fact_version == case.fact_version,
-            models.AIOutput.issue_version == case.issue_version,
-        ).order_by(models.AIOutput.version.desc()).first()
-        if output:
-            current_outputs.append(output)
+    current_outputs = current_analysis_outputs(db, case)
 
     pending = [output for output in current_outputs if output.review_status == "待复核"]
     for output in pending:
@@ -1606,7 +1700,7 @@ def confirm_all_analyses(case_id: int, payload: schemas.BatchReview, db: Session
         log_event(db, case.id, "analyses_confirmed_in_batch", "已批量接受当前版本法律分析", {"count": len(pending)})
     reconcile_ai_case_workflow(db, case)
     db.commit()
-    return [serialize_output(output) for output in current_outputs]
+    return [serialize_output(output, db) for output in current_outputs]
 
 
 @app.post("/work-units/{work_unit_id}/memory-candidate", response_model=schemas.MemoryOut)
@@ -1614,12 +1708,20 @@ def create_memory_candidate(work_unit_id: int, db: Session = Depends(get_db)):
     unit = db.query(models.WorkUnit).filter(models.WorkUnit.id == work_unit_id).first()
     if not unit:
         raise HTTPException(status_code=404, detail="未找到工作单元")
+    case = require_case(db, unit.case_id)
+    reconcile_ai_case_workflow(db, case)
+    if case.workflow_mode == "ai_case" and unit.code.startswith("legal_analysis:"):
+        current_output = latest_unit_output(db, unit, "legal_analysis")
+        if not current_output:
+            raise HTTPException(status_code=400, detail="请先运行当前争点的法律分析")
+        require_current_analysis_output(db, case, current_output)
+        if current_output.review_status not in {"已接受", "已修改"}:
+            raise HTTPException(status_code=400, detail="请先批准当前版本法律分析，再生成候选知识")
     if unit.status != "已批准":
         raise HTTPException(status_code=400, detail="仅已批准的工作单元可以生成候选知识")
     existing = db.query(models.LegalMemory).filter(models.LegalMemory.source_work_unit_id == unit.id).first()
     if existing:
         return serialize_memory(existing)
-    case = require_case(db, unit.case_id)
     output = from_json(unit.output_json, {})
     memory = models.LegalMemory(
         title=f"{unit.title}：{case.title}",
@@ -1851,7 +1953,7 @@ def run_analysis(case_id: int, db: Session = Depends(get_db)):
     db.commit()
     db.refresh(output)
     log_event(db, case_id, "analysis_generated", "AI 法律分析已生成")
-    return serialize_output(output)
+    return serialize_output(output, db)
 
 
 @app.post("/cases/{case_id}/workflow/run-draft", response_model=schemas.AIOutputOut)
@@ -1874,7 +1976,7 @@ def run_draft(case_id: int, db: Session = Depends(get_db)):
     db.commit()
     db.refresh(output)
     log_event(db, case_id, "draft_generated", "劳动仲裁申请书初稿已生成")
-    return serialize_output(output)
+    return serialize_output(output, db)
 
 
 @app.post("/cases/{case_id}/workflow/run-risk", response_model=schemas.AIOutputOut)
@@ -1892,7 +1994,7 @@ def run_risk(case_id: int, db: Session = Depends(get_db)):
     db.commit()
     db.refresh(output)
     log_event(db, case_id, "risk_generated", "风险提示已生成")
-    return serialize_output(output)
+    return serialize_output(output, db)
 
 
 @app.post("/cases/{case_id}/workflow/run-demo")

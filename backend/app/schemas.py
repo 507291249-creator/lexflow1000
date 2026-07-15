@@ -177,6 +177,7 @@ class AIOutputOut(BaseModel):
     output_type: str
     title: str
     content: str
+    reviewed_content: str = ""
     meta_json: Any
     work_unit_id: Optional[int] = None
     review_status: str = "待复核"

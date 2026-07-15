@@ -37,6 +37,7 @@ export type AIOutput = {
   output_type: string;
   title: string;
   content: string;
+  reviewed_content?: string;
   meta_json: unknown;
   work_unit_id: number | null;
   review_status: string;
@@ -191,6 +192,7 @@ export type CaseWorkspace = {
     approved_analysis_count: number;
     analysis_count: number;
     report_ready: boolean;
+    report_current?: boolean;
   };
 };
 
