@@ -72,6 +72,10 @@ class FactReview(BaseModel):
     reason: str
 
 
+class BatchReview(BaseModel):
+    reason: str = "人工复核 AI 建议后批量确认，后续按需逐项修订。"
+
+
 class IssueCreate(BaseModel):
     title: str
     description: str = ""

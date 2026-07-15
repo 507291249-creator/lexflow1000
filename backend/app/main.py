@@ -1135,6 +1135,36 @@ def review_fact(fact_id: int, payload: schemas.FactReview, db: Session = Depends
     return serialize_fact(fact)
 
 
+@app.post("/cases/{case_id}/facts/confirm-all", response_model=list[schemas.FactOut])
+def confirm_all_facts(case_id: int, payload: schemas.BatchReview, db: Session = Depends(get_db)):
+    case = require_case(db, case_id)
+    facts = [item for item in current_facts(db, case) if item.status == "待确认"]
+    if not facts:
+        raise HTTPException(status_code=400, detail="没有待确认的事实")
+    if case.workflow_mode == "ai_case":
+        advance_fact_version(db, case)
+    for fact in facts:
+        fact.status = "已确认"
+        fact.human_fact = fact.ai_fact
+        fact.fact_version = case.fact_version
+        record_human_trace(
+            db,
+            case_id=case.id,
+            work_unit_id=fact.work_unit_id,
+            action="批量接受",
+            object_type="事实",
+            object_id=fact.id,
+            ai_suggestion=fact.ai_fact,
+            human_revision=fact.human_fact,
+            reason=payload.reason,
+            tags=["事实结构化", "批量确认"],
+        )
+    log_event(db, case.id, "facts_confirmed_in_batch", "已批量确认待确认事实", {"count": len(facts)})
+    prepare_issue_identification_after_fact_review(db, case)
+    db.commit()
+    return [serialize_fact(item) for item in current_facts(db, case)]
+
+
 @app.get("/cases/{case_id}/issues", response_model=list[schemas.IssueOut])
 def list_issues(case_id: int, db: Session = Depends(get_db)):
     case = require_case(db, case_id)
@@ -1262,6 +1292,38 @@ def issue_action(issue_id: int, payload: schemas.IssueAction, db: Session = Depe
     db.commit()
     db.refresh(issue)
     return serialize_issue(issue)
+
+
+@app.post("/cases/{case_id}/issues/confirm-all", response_model=list[schemas.IssueOut])
+def confirm_all_issues(case_id: int, payload: schemas.BatchReview, db: Session = Depends(get_db)):
+    case = require_case(db, case_id)
+    if case.workflow_mode == "ai_case" and not facts_are_confirmed(db, case):
+        raise HTTPException(status_code=400, detail="请先确认事实，再批量确认争点")
+    issues = [item for item in current_issues(db, case) if item.status == "AI建议"]
+    if not issues:
+        raise HTTPException(status_code=400, detail="没有待确认的 AI 争点")
+    if case.workflow_mode == "ai_case":
+        advance_issue_version(db, case)
+    for issue in issues:
+        issue.status = "人工确认"
+        issue.issue_version = case.issue_version
+        record_human_trace(
+            db,
+            case_id=case.id,
+            work_unit_id=issue.work_unit_id,
+            action="批量确认",
+            object_type="争点",
+            object_id=issue.id,
+            ai_suggestion=f"{issue.title}\n{issue.description}",
+            human_revision="人工确认进入法律分析",
+            reason=payload.reason,
+            tags=["争点识别", "批量确认"],
+        )
+    if case.workflow_mode == "ai_case":
+        sync_analysis_units(db, case)
+    log_event(db, case.id, "issues_confirmed_in_batch", "已批量确认 AI 争点", {"count": len(issues)})
+    db.commit()
+    return [serialize_issue(item) for item in current_issues(db, case)]
 
 
 @app.delete("/issues/{issue_id}")
