@@ -185,6 +185,13 @@ export type CaseWorkspace = {
   ai_outputs: AIOutput[];
   traces: Trace[];
   memory_candidates: MemoryItem[];
+  workflow_state?: {
+    facts_confirmed: boolean;
+    issues_confirmed: boolean;
+    approved_analysis_count: number;
+    analysis_count: number;
+    report_ready: boolean;
+  };
 };
 
 export async function api<T>(path: string, options?: RequestInit): Promise<T> {

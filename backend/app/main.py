@@ -453,6 +453,93 @@ def facts_are_confirmed(db: Session, case: models.Case) -> bool:
     )
 
 
+def issues_are_confirmed(db: Session, case: models.Case) -> bool:
+    issues = current_issues(db, case)
+    reviewed_statuses = {"人工确认", "分析中", "已完成"}
+    return bool(issues) and all(item.status in reviewed_statuses for item in issues) and any(
+        item.status in reviewed_statuses for item in issues
+    )
+
+
+def current_analysis_outputs(db: Session, case: models.Case) -> list[models.AIOutput]:
+    """Return the latest current-version legal analysis for each confirmed issue."""
+    issue_ids = {
+        item.id for item in current_issues(db, case)
+        if item.status in {"人工确认", "分析中", "已完成"}
+    }
+    if not issue_ids:
+        return []
+    units = db.query(models.WorkUnit).filter(
+        models.WorkUnit.case_id == case.id,
+        models.WorkUnit.code.like("legal_analysis:%"),
+    ).all()
+    outputs: list[models.AIOutput] = []
+    for unit in units:
+        if unit.parent_issue_id not in issue_ids:
+            continue
+        output = db.query(models.AIOutput).filter(
+            models.AIOutput.work_unit_id == unit.id,
+            models.AIOutput.output_type == "legal_analysis",
+            models.AIOutput.fact_version == case.fact_version,
+            models.AIOutput.issue_version == case.issue_version,
+        ).order_by(models.AIOutput.version.desc()).first()
+        if output:
+            outputs.append(output)
+    return outputs
+
+
+def reconcile_ai_case_workflow(db: Session, case: models.Case) -> dict:
+    """Keep aggregate work-unit states aligned with reviewed child records.
+
+    Earlier versions updated facts, issues, and AI outputs without updating the
+    corresponding work unit. Reconciliation also repairs those existing cases
+    whenever their workspace is loaded.
+    """
+    if case.workflow_mode != "ai_case":
+        return {
+            "facts_confirmed": False,
+            "issues_confirmed": False,
+            "approved_analysis_count": 0,
+            "analysis_count": 0,
+            "report_ready": False,
+        }
+
+    facts_confirmed = facts_are_confirmed(db, case)
+    issues_confirmed = issues_are_confirmed(db, case)
+    units = db.query(models.WorkUnit).filter(models.WorkUnit.case_id == case.id).all()
+    fact_unit = next((item for item in units if item.code == "fact_extraction"), None)
+    issue_unit = next((item for item in units if item.code == "issue_identification"), None)
+    if fact_unit and facts_confirmed and fact_unit.status in {"待人工复核", "待处理", "失败"}:
+        fact_unit.status = "已完成"
+    if issue_unit and issues_confirmed and issue_unit.status in {"待人工复核", "待处理", "失败"}:
+        issue_unit.status = "已完成"
+
+    outputs = current_analysis_outputs(db, case)
+    outputs_by_unit = {item.work_unit_id: item for item in outputs}
+    approved_statuses = {"已接受", "已修改"}
+    for unit in units:
+        if not unit.code.startswith("legal_analysis:"):
+            continue
+        output = outputs_by_unit.get(unit.id)
+        if not output:
+            continue
+        if output.review_status in approved_statuses:
+            unit.status = "已批准"
+        elif output.review_status == "待复核":
+            unit.status = "待人工复核"
+        elif output.review_status == "已驳回":
+            unit.status = "需修改"
+
+    approved_count = sum(item.review_status in approved_statuses for item in outputs)
+    return {
+        "facts_confirmed": facts_confirmed,
+        "issues_confirmed": issues_confirmed,
+        "approved_analysis_count": approved_count,
+        "analysis_count": len(outputs),
+        "report_ready": facts_confirmed and issues_confirmed and approved_count > 0,
+    }
+
+
 def run_ai_fact_extraction(db: Session, case: models.Case, unit: models.WorkUnit) -> models.WorkUnit:
     existing = current_facts(db, case)
     if existing:
@@ -650,15 +737,16 @@ def reviewed_output_content(db: Session, output: models.AIOutput) -> str:
 
 
 def generate_legal_report(db: Session, case: models.Case) -> models.AIOutput:
+    reconcile_ai_case_workflow(db, case)
     facts = [item for item in current_facts(db, case) if item.status == "已确认"]
-    issues = [item for item in current_issues(db, case) if item.status == "人工确认"]
-    analyses = db.query(models.AIOutput).filter(
-        models.AIOutput.case_id == case.id,
-        models.AIOutput.output_type == "legal_analysis",
-        models.AIOutput.review_status.in_(["已接受", "已修改"]),
-        models.AIOutput.fact_version == case.fact_version,
-        models.AIOutput.issue_version == case.issue_version,
-    ).order_by(models.AIOutput.created_at.asc()).all()
+    issues = [
+        item for item in current_issues(db, case)
+        if item.status in {"人工确认", "分析中", "已完成"}
+    ]
+    analyses = [
+        item for item in current_analysis_outputs(db, case)
+        if item.review_status in {"已接受", "已修改"}
+    ]
     if not facts or not issues or not analyses:
         raise HTTPException(status_code=400, detail="请先确认事实和争点，并至少批准一份当前版本的法律分析")
     analyses_by_issue = {item.work_unit_id: item for item in analyses}
@@ -899,6 +987,7 @@ def get_case(case_id: int, db: Session = Depends(get_db)):
 def get_workspace(case_id: int, db: Session = Depends(get_db)):
     case = require_case(db, case_id)
     ensure_case_workflow(db, case)
+    workflow_state = reconcile_ai_case_workflow(db, case)
     db.commit()
     outputs = db.query(models.AIOutput).filter(
         models.AIOutput.case_id == case_id
@@ -926,6 +1015,7 @@ def get_workspace(case_id: int, db: Session = Depends(get_db)):
         "ai_outputs": [serialize_output(item) for item in outputs],
         "traces": [serialize_trace(item) for item in traces],
         "memory_candidates": [serialize_memory(item) for item in candidates],
+        "workflow_state": workflow_state,
     }
 
 
@@ -1035,6 +1125,7 @@ def execute_work_unit(db: Session, case: models.Case, unit: models.WorkUnit) -> 
 def list_work_units(case_id: int, db: Session = Depends(get_db)):
     case = require_case(db, case_id)
     ensure_case_workflow(db, case)
+    reconcile_ai_case_workflow(db, case)
     db.commit()
     items = db.query(models.WorkUnit).filter(models.WorkUnit.case_id == case_id).order_by(models.WorkUnit.sequence).all()
     return [serialize_work_unit(item) for item in items]
@@ -1140,6 +1231,7 @@ def review_fact(fact_id: int, payload: schemas.FactReview, db: Session = Depends
     )
     log_event(db, fact.case_id, "fact_reviewed", f"事实已{payload.action}", {"fact_id": fact.id})
     prepare_issue_identification_after_fact_review(db, case)
+    reconcile_ai_case_workflow(db, case)
     db.commit()
     db.refresh(fact)
     return serialize_fact(fact)
@@ -1150,6 +1242,8 @@ def confirm_all_facts(case_id: int, payload: schemas.BatchReview, db: Session = 
     case = require_case(db, case_id)
     facts = [item for item in current_facts(db, case) if item.status == "待确认"]
     if not facts:
+        reconcile_ai_case_workflow(db, case)
+        db.commit()
         return [serialize_fact(item) for item in current_facts(db, case)]
     if case.workflow_mode == "ai_case":
         advance_fact_version(db, case)
@@ -1171,6 +1265,7 @@ def confirm_all_facts(case_id: int, payload: schemas.BatchReview, db: Session = 
         )
     log_event(db, case.id, "facts_confirmed_in_batch", "已批量确认待确认事实", {"count": len(facts)})
     prepare_issue_identification_after_fact_review(db, case)
+    reconcile_ai_case_workflow(db, case)
     db.commit()
     return [serialize_fact(item) for item in current_facts(db, case)]
 
@@ -1282,6 +1377,7 @@ def issue_action(issue_id: int, payload: schemas.IssueAction, db: Session = Depe
     if issue.status == target_status:
         if case.workflow_mode == "ai_case" and payload.action == "确认":
             sync_analysis_units(db, case)
+            reconcile_ai_case_workflow(db, case)
             db.commit()
         return serialize_issue(issue)
     issue.status = target_status
@@ -1303,6 +1399,7 @@ def issue_action(issue_id: int, payload: schemas.IssueAction, db: Session = Depe
     log_event(db, issue.case_id, "issue_action", f"争点状态更新为：{issue.status}")
     if case.workflow_mode == "ai_case" and payload.action == "确认":
         sync_analysis_units(db, case)
+    reconcile_ai_case_workflow(db, case)
     db.commit()
     db.refresh(issue)
     return serialize_issue(issue)
@@ -1317,6 +1414,7 @@ def confirm_all_issues(case_id: int, payload: schemas.BatchReview, db: Session =
     if not issues:
         if case.workflow_mode == "ai_case":
             sync_analysis_units(db, case)
+            reconcile_ai_case_workflow(db, case)
             db.commit()
         return [serialize_issue(item) for item in current_issues(db, case)]
     if case.workflow_mode == "ai_case":
@@ -1338,6 +1436,7 @@ def confirm_all_issues(case_id: int, payload: schemas.BatchReview, db: Session =
         )
     if case.workflow_mode == "ai_case":
         sync_analysis_units(db, case)
+        reconcile_ai_case_workflow(db, case)
     log_event(db, case.id, "issues_confirmed_in_batch", "已批量确认 AI 争点", {"count": len(issues)})
     db.commit()
     return [serialize_issue(item) for item in current_issues(db, case)]
@@ -1457,6 +1556,7 @@ def review_ai_output(output_id: int, payload: schemas.AIReview, db: Session = De
     unit = db.query(models.WorkUnit).filter(models.WorkUnit.id == output.work_unit_id).first()
     if unit and case.workflow_mode == "ai_case" and unit.code.startswith("legal_analysis:"):
         unit.status = "已批准" if payload.action in {"接受", "修改"} else "需修改"
+    reconcile_ai_case_workflow(db, case)
     log_event(db, case.id, "ai_output_reviewed", f"AI 输出已{payload.action}", {"output_id": output.id})
     db.commit()
     db.refresh(output)
@@ -1504,6 +1604,7 @@ def confirm_all_analyses(case_id: int, payload: schemas.BatchReview, db: Session
         )
     if pending:
         log_event(db, case.id, "analyses_confirmed_in_batch", "已批量接受当前版本法律分析", {"count": len(pending)})
+    reconcile_ai_case_workflow(db, case)
     db.commit()
     return [serialize_output(output) for output in current_outputs]
 

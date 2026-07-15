@@ -35,6 +35,8 @@ const statusClass: Record<string, string> = {
   "已修改": "bg-blue-50 text-blue-700",
   "已完成": "bg-[#e7f1ef] text-mint",
   "已确认": "bg-[#e7f1ef] text-mint",
+  "可生成": "bg-[#e7f1ef] text-mint",
+  "部分已批准": "bg-blue-50 text-blue-700",
   "待人工复核": "bg-amber-50 text-amber-700",
   "待确认": "bg-amber-50 text-amber-700",
   "AI建议": "bg-blue-50 text-blue-700",
@@ -290,10 +292,11 @@ function AiCaseWorkspace({ caseId, workspace, onReload }: { caseId: number; work
   const issueUnit = workspace.work_units.find((item) => item.code === "issue_identification");
   const currentIssueIds = new Set(workspace.issues.map((item) => item.id));
   const analysisUnits = workspace.work_units.filter((item) => item.code.startsWith("legal_analysis:") && currentIssueIds.has(item.parent_issue_id || -1));
-  const report = workspace.ai_outputs.filter((item) => item.output_type === "legal_report").sort((a, b) => b.version - a.version)[0];
+  const report = workspace.ai_outputs.filter((item) => item.output_type === "legal_report" && item.fact_version === workspace.case.fact_version && item.issue_version === workspace.case.issue_version).sort((a, b) => b.version - a.version)[0];
   const latestFactOutput = workspace.ai_outputs.filter((item) => item.output_type === "fact_extraction").sort((a, b) => b.version - a.version)[0];
   const latestIssueOutput = workspace.ai_outputs.filter((item) => item.output_type === "issue_identification").sort((a, b) => b.version - a.version)[0];
   const factsConfirmed = workspace.facts.length > 0 && workspace.facts.every((item) => item.status !== "待确认") && workspace.facts.some((item) => item.status === "已确认");
+  const issuesConfirmed = workspace.issues.length > 0 && workspace.issues.every((item) => ["人工确认", "分析中", "已完成"].includes(item.status));
   const issueRunPath = issueUnit ? `/cases/${caseId}/work-units/${issueUnit.id}/run` : "";
   const analysesConfirmPath = `/cases/${caseId}/analyses/confirm-all`;
   const pendingAnalysisCount = analysisUnits.filter((unit) => {
@@ -302,6 +305,39 @@ function AiCaseWorkspace({ caseId, workspace, onReload }: { caseId: number; work
       .sort((a, b) => b.version - a.version)[0];
     return latest?.review_status === "待复核";
   }).length;
+  const approvedAnalysisCount = analysisUnits.filter((unit) => {
+    const latest = workspace.ai_outputs
+      .filter((item) => item.work_unit_id === unit.id && item.output_type === "legal_analysis" && item.fact_version === workspace.case.fact_version && item.issue_version === workspace.case.issue_version)
+      .sort((a, b) => b.version - a.version)[0];
+    return latest && ["已接受", "已修改"].includes(latest.review_status);
+  }).length;
+  const reportReady = workspace.workflow_state?.report_ready ?? (factsConfirmed && issuesConfirmed && approvedAnalysisCount > 0);
+  const factStepStatus = factsConfirmed ? "已完成" : (factUnit?.status || "待处理");
+  const issueStepStatus = issuesConfirmed ? "已完成" : (issueUnit?.status || (factsConfirmed ? "待处理" : "等待事实确认"));
+  const analysisStepStatus = !analysisUnits.length
+    ? "等待争点确认"
+    : approvedAnalysisCount === analysisUnits.length
+      ? "已完成"
+      : approvedAnalysisCount > 0
+        ? "部分已批准"
+        : pendingAnalysisCount > 0
+          ? "待人工复核"
+          : "已创建";
+  const reportStepStatus = report ? "已完成" : reportReady ? "可生成" : "等待已批准分析";
+
+  function displayedUnitStatus(unit: WorkUnit) {
+    if (unit.code === "fact_extraction" && factsConfirmed) return "已完成";
+    if (unit.code === "issue_identification" && issuesConfirmed) return "已完成";
+    if (unit.code.startsWith("legal_analysis:")) {
+      const latest = workspace.ai_outputs
+        .filter((item) => item.work_unit_id === unit.id && item.output_type === "legal_analysis" && item.fact_version === workspace.case.fact_version && item.issue_version === workspace.case.issue_version)
+        .sort((a, b) => b.version - a.version)[0];
+      if (latest && ["已接受", "已修改"].includes(latest.review_status)) return "已批准";
+      if (latest?.review_status === "待复核") return "待人工复核";
+      if (latest?.review_status === "已驳回") return "需修改";
+    }
+    return unit.status;
+  }
 
   async function request(path: string, method = "POST", body?: unknown) {
     if (requestLock.current) return;
@@ -360,7 +396,7 @@ function AiCaseWorkspace({ caseId, workspace, onReload }: { caseId: number; work
 
       {tab === "概览" && <AiOverview workspace={workspace} factsConfirmed={factsConfirmed} analysisCount={analysisUnits.length} onOpen={setTab} />}
 
-      {tab === "工作流" && <section className="grid gap-4 lg:grid-cols-[0.8fr_1.2fr]"><div className="card p-5"><h2 className="font-semibold text-ink">现场分析路径</h2><div className="mt-5 space-y-3"><AiStep number="1" title="事实提取" status={factUnit?.status || "待处理"} detail="基于现场输入和上传材料生成结构化事实。" /><AiStep number="2" title="人工确认事实" status={factsConfirmed ? "已完成" : "待确认"} detail="全部事实需接受、修改或驳回。" /><AiStep number="3" title="争点识别" status={issueUnit?.status || (factsConfirmed ? "待处理" : "等待事实确认")} detail="确认全部事实后，点击运行生成 AI 争点建议。" /><AiStep number="4" title="逐项法律分析" status={analysisUnits.length ? "已创建" : "等待争点确认"} detail="每个确认争点都有独立分析任务和版本。" /><AiStep number="5" title="生成报告" status={report ? "已完成" : "等待已批准分析"} detail="汇总当前版本的事实、争点和已批准分析。" /></div></div><div className="card p-5"><h2 className="font-semibold text-ink">工作单元</h2><div className="mt-4 space-y-3">{workspace.work_units.map((unit) => { const runPath = `/cases/${caseId}/work-units/${unit.id}/run`; const blocked = unit.code === "issue_identification" && !factsConfirmed; return <div className="rounded-md border border-line p-4" key={unit.id}><div className="flex flex-wrap items-start justify-between gap-3"><div><div className="flex items-center gap-2"><h3 className="font-medium text-ink">{unit.title}</h3><span className={`badge ${statusClass[unit.status] || "bg-slate-100 text-slate-600"}`}>{unit.status}</span></div><p className="mt-1 text-sm text-slate-600">{unit.description}</p></div>{(unit.code === "fact_extraction" || unit.code === "issue_identification" || unit.code.startsWith("legal_analysis:")) && <button className="button-secondary" type="button" disabled={busy === runPath || blocked} title={blocked ? "请先确认全部事实" : undefined} onClick={() => request(runPath)}><Play size={16} />{busy === runPath ? "正在运行" : unit.status === "失败" ? "重新运行" : "运行"}</button>}</div>{blocked && <p className="mt-3 text-xs text-amber-700">请先在“事实”页一键确认或逐项处理全部事实。</p>}{unit.status === "失败" && <p className="mt-3 border-l-2 border-rose-500 bg-rose-50 px-3 py-2 text-xs text-rose-700">{String((unit.output_json.error as { message?: string } | undefined)?.message || "结构化输出失败，可重新运行。")}</p>}{unit.code.startsWith("legal_analysis:") && <p className="mt-3 text-xs text-slate-500">输入事实版本 {workspace.case.fact_version} · 争点版本 {workspace.case.issue_version}</p>}</div>; })}</div></div></section>}
+      {tab === "工作流" && <section className="grid gap-4 lg:grid-cols-[0.8fr_1.2fr]"><div className="card p-5"><h2 className="font-semibold text-ink">现场分析路径</h2><div className="mt-5 space-y-3"><AiStep number="1" title="事实提取" status={factStepStatus} detail="基于现场输入和上传材料生成结构化事实。" /><AiStep number="2" title="人工确认事实" status={factsConfirmed ? "已完成" : "待确认"} detail="全部事实需接受、修改或驳回。" /><AiStep number="3" title="争点识别" status={issueStepStatus} detail="确认全部事实后，点击运行生成 AI 争点建议。" /><AiStep number="4" title="逐项法律分析" status={analysisStepStatus} detail={`${approvedAnalysisCount}/${analysisUnits.length} 项当前版本分析已批准。`} /><AiStep number="5" title="生成报告" status={reportStepStatus} detail={reportReady ? "当前已有可用于报告的已批准分析。" : "汇总当前版本的事实、争点和已批准分析。"} /></div>{reportReady && !report && <button className="button-primary mt-5 w-full" type="button" onClick={() => setTab("成果")}><FileText size={16} />前往生成法律分析报告</button>}</div><div className="card p-5"><h2 className="font-semibold text-ink">工作单元</h2><div className="mt-4 space-y-3">{workspace.work_units.map((unit) => { const runPath = `/cases/${caseId}/work-units/${unit.id}/run`; const blocked = unit.code === "issue_identification" && !factsConfirmed; const unitStatus = displayedUnitStatus(unit); return <div className="rounded-md border border-line p-4" key={unit.id}><div className="flex flex-wrap items-start justify-between gap-3"><div><div className="flex items-center gap-2"><h3 className="font-medium text-ink">{unit.title}</h3><span className={`badge ${statusClass[unitStatus] || "bg-slate-100 text-slate-600"}`}>{unitStatus}</span></div><p className="mt-1 text-sm text-slate-600">{unit.description}</p></div>{(unit.code === "fact_extraction" || unit.code === "issue_identification" || unit.code.startsWith("legal_analysis:")) && <button className="button-secondary" type="button" disabled={busy === runPath || blocked} title={blocked ? "请先确认全部事实" : undefined} onClick={() => request(runPath)}><Play size={16} />{busy === runPath ? "正在运行" : unitStatus === "失败" ? "重新运行" : "运行"}</button>}</div>{blocked && <p className="mt-3 text-xs text-amber-700">请先在“事实”页一键确认或逐项处理全部事实。</p>}{unitStatus === "失败" && <p className="mt-3 border-l-2 border-rose-500 bg-rose-50 px-3 py-2 text-xs text-rose-700">{String((unit.output_json.error as { message?: string } | undefined)?.message || "结构化输出失败，可重新运行。")}</p>}{unit.code.startsWith("legal_analysis:") && <p className="mt-3 text-xs text-slate-500">输入事实版本 {workspace.case.fact_version} · 争点版本 {workspace.case.issue_version}</p>}</div>; })}</div></div></section>}
 
       {tab === "材料" && <section className="card p-5"><div className="flex flex-wrap items-center justify-between gap-3"><div><h2 className="font-semibold text-ink">原始材料</h2><p className="mt-1 text-sm text-slate-600">新增材料后可重新运行事实提取；已有分析不会被覆盖。</p></div><label className="button-secondary cursor-pointer"><FileUp size={16} />{busy === "upload" ? "正在上传" : "补充材料"}<input className="hidden" type="file" accept=".pdf,.docx,.txt" onChange={upload} /></label></div><div className="mt-5 divide-y divide-line">{workspace.documents.map((item) => <div key={item.id} className="py-3"><div className="font-medium text-ink">{item.filename}</div><p className="mt-1 whitespace-pre-wrap text-sm leading-6 text-slate-600">{item.raw_text.slice(0, 600) || "文件未能提取文本，请人工核验。"}</p></div>)}</div></section>}
 
@@ -370,7 +406,7 @@ function AiCaseWorkspace({ caseId, workspace, onReload }: { caseId: number; work
 
       {tab === "分析" && <section className="space-y-4"><div className="flex flex-wrap items-center justify-between gap-3"><div><h2 className="text-lg font-semibold text-ink">逐项法律分析</h2><p className="mt-1 text-sm text-slate-600">每个确认争点单独运行。重新运行会生成新的版本，并保留旧版本及其决策记录。</p></div><button className="button-primary" type="button" disabled={Boolean(busy) || pendingAnalysisCount === 0} onClick={() => request(analysesConfirmPath, "POST", { reason: "人工复核当前版本法律分析后批量接受，后续按需逐项修订。" })}><Check size={16} />{busy === analysesConfirmPath ? "正在接受" : `一键接受全部分析${pendingAnalysisCount ? `（${pendingAnalysisCount}）` : ""}`}</button></div>{analysisUnits.map((unit) => <AiAnalysisUnit key={unit.id} unit={unit} outputs={workspace.ai_outputs.filter((item) => item.work_unit_id === unit.id).sort((a, b) => b.version - a.version)} busy={busy} onRun={() => request(`/cases/${caseId}/work-units/${unit.id}/run`)} onReview={(output, action, human_revision, reason, supplementary_material) => request(`/ai-outputs/${output.id}/review`, "POST", { action, human_revision, reason, supplementary_material })} />)}{!analysisUnits.length && <div className="card p-6 text-sm text-slate-500">请先在“争点”中确认至少一个争点。</div>}</section>}
 
-      {tab === "成果" && <section className="space-y-4"><div className="flex flex-wrap items-center justify-between gap-3"><div><h2 className="text-lg font-semibold text-ink">法律分析报告</h2><p className="mt-1 text-sm text-slate-600">报告仅汇总当前事实版本、当前争点版本和已接受或已修改的法律分析。</p></div><button className="button-primary" disabled={Boolean(busy)} onClick={() => request(`/cases/${caseId}/legal-analysis-report`)}><FileText size={16} />生成法律分析报告</button></div>{report ? <div className="card p-5"><div className="flex items-center justify-between gap-3"><h3 className="font-semibold text-ink">{report.title}</h3><span className="badge bg-[#e7f1ef] text-mint">版本 {report.version}</span></div><pre className="mt-5 whitespace-pre-wrap text-sm leading-7 text-slate-700">{report.content}</pre></div> : <div className="card p-6 text-sm text-slate-500">确认事实与争点，并接受至少一份当前版本法律分析后即可生成报告。</div>}</section>}
+      {tab === "成果" && <section className="space-y-4"><div className="flex flex-wrap items-center justify-between gap-3"><div><h2 className="text-lg font-semibold text-ink">法律分析报告</h2><p className="mt-1 text-sm text-slate-600">报告仅汇总当前事实版本、当前争点版本和已接受或已修改的法律分析。</p><p className={`mt-2 text-sm ${reportReady ? "text-emerald-700" : "text-amber-700"}`}>{reportReady ? `已具备生成条件：当前有 ${approvedAnalysisCount} 项分析获批。` : `尚未具备生成条件：当前有 ${approvedAnalysisCount} 项分析获批，请先运行并接受至少一项当前版本分析。`}</p></div><button className="button-primary" disabled={Boolean(busy) || !reportReady} title={reportReady ? undefined : "请先接受至少一项当前版本法律分析"} onClick={() => request(`/cases/${caseId}/legal-analysis-report`)}><FileText size={16} />{busy === `/cases/${caseId}/legal-analysis-report` ? "正在生成" : "生成法律分析报告"}</button></div>{report ? <div className="card p-5"><div className="flex items-center justify-between gap-3"><h3 className="font-semibold text-ink">{report.title}</h3><span className="badge bg-[#e7f1ef] text-mint">版本 {report.version}</span></div><pre className="mt-5 whitespace-pre-wrap text-sm leading-7 text-slate-700">{report.content}</pre></div> : <div className="card p-6 text-sm text-slate-500">确认事实与争点，并接受至少一份当前版本法律分析后即可生成报告。</div>}</section>}
 
       {tab === "决策记录" && <DecisionTimeline traces={workspace.traces} />}
     </div>
