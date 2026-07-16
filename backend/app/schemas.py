@@ -156,6 +156,32 @@ class DocumentOut(BaseModel):
     raw_text: str
     parsed_json: Any
     uploaded_at: datetime
+    original_filename: str = ""
+    mime_type: str = "application/octet-stream"
+    file_size: Optional[int] = None
+    checksum: Optional[str] = None
+    storage_provider: str = "legacy_local"
+    storage_key: Optional[str] = None
+    processing_status: str = "uploaded"
+    extraction_error: str = ""
+    updated_at: datetime
+
+
+class FactSourceOut(BaseModel):
+    id: int
+    fact_id: int
+    document_id: int
+    source_text: str
+    page_number: Optional[int] = None
+    paragraph_index: Optional[int] = None
+    start_offset: Optional[int] = None
+    end_offset: Optional[int] = None
+    relation_type: str = "support"
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
 
 
 class EvidenceOut(BaseModel):

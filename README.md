@@ -57,7 +57,7 @@ export ZHIPU_MODEL="glm-4-flash-250414"
 
 ## 技术栈
 
-- Backend: FastAPI + SQLite + SQLAlchemy
+- Backend: FastAPI + SQLAlchemy + Alembic；本地默认 SQLite，生产环境使用 PostgreSQL
 - Frontend: Next.js + React + Tailwind CSS
 - LLM: 已封装为可替换 agent，默认使用 mock 输出
 - Demo 数据: 内置劳动仲裁示例、`labor_law_rules.json`、`sample_memory.json`
@@ -99,10 +99,51 @@ cd backend
 python -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
+alembic -c alembic.ini upgrade head
 uvicorn app.main:app --reload --port 8000
 ```
 
-后端启动后会自动创建 SQLite 数据库并写入 Demo 案件与示例 Legal Memory。
+`alembic upgrade head` 会创建或升级数据库结构。本地 SQLite 启动阶段暂时保留 `create_all()` 和旧版动态补字段逻辑作为兼容桥梁；PostgreSQL 启动不会自动建表，必须在应用启动前完成 Alembic 迁移，避免 `create_all()` 与 0002 冲突。Sprint 1A 新增的 Document 字段与 `fact_sources` 只由 Alembic 管理。完成两轮稳定生产迁移后将移除旧版动态迁移逻辑。
+
+### 数据库迁移
+
+查看迁移历史和当前版本：
+
+```bash
+cd backend
+alembic -c alembic.ini history
+alembic -c alembic.ini current
+```
+
+全新数据库直接执行：
+
+```bash
+alembic -c alembic.ini upgrade head
+```
+
+已有 MVP 1 SQLite 数据库必须先停止后端并备份：
+
+```bash
+cp data/lexflow.db "data/lexflow-before-mvp2-$(date +%Y%m%d-%H%M%S).db"
+```
+
+确认数据库中已经存在 `cases`、`documents`、`case_facts` 等旧表，并且尚未由 Alembic 管理后，执行：
+
+```bash
+alembic -c alembic.ini stamp 0001_baseline
+alembic -c alembic.ini upgrade head
+alembic -c alembic.ini current
+```
+
+`stamp` 只登记已有结构，不创建或修改现有表。不要对已有 MVP 1 数据库直接执行 `upgrade 0001_baseline`，否则会尝试重复创建表。
+
+回滚 Sprint 1A 数据迁移：
+
+```bash
+alembic -c alembic.ini downgrade 0001_baseline
+```
+
+回滚会删除 `fact_sources` 和新增的 Document 字段。执行前必须备份，并同时将应用回滚到不读取这些字段的版本。
 
 API 文档：
 
