@@ -246,7 +246,7 @@ pg_restore --clean --if-exists --no-owner \
 
 ### 自动化验证
 
-仓库中的 `.github/workflows/mvp2-sprint1a5-validation.yml` 会启动 PostgreSQL 16 临时服务并执行 `pytest -q`。本地也可使用任意临时 PostgreSQL：
+仓库中的 `.github/workflows/mvp2-sprint1a5-validation.yml` 会启动 PostgreSQL 18 临时服务并执行 `pytest -q`。本地也可使用任意临时 PostgreSQL：
 
 ```bash
 cd backend
@@ -264,9 +264,43 @@ pytest -q
 3. 在 Vercel 项目环境变量中添加 `NEXT_PUBLIC_API_BASE`，值为 Render 后端地址，例如 `https://<render-service>.onrender.com`。
 4. 部署后打开 Vercel 地址，确认首页能加载示例案件。
 
-## 3. 文件上传说明
+## 3. 私有对象存储
 
-当前云端版本会在后端实例的临时目录中解析上传文件，并把解析后的文本和案件信息保存到 PostgreSQL。原始文件长期归档建议连接 Vercel Blob，并在生产环境中使用私有存储桶。
+Sprint 1B 起，新上传的原始材料必须写入私有的 S3 兼容对象存储，Render 的 `/tmp` 只用于解析期间的临时下载，不再承担原始文件持久化。可使用 Cloudflare R2 或标准 S3 兼容服务，业务代码通过 `StorageService` 访问，不绑定供应商 SDK。
+
+### 3.1 创建存储桶和凭据
+
+1. 创建一个专用于 LexFlow 的私有存储桶，不开启公开访问和静态网站托管。
+2. 创建仅供后端使用的访问凭据，至少授予该桶的对象读取、写入、删除和列举/检查权限。
+3. 不要把访问密钥写入仓库、Vercel 或浏览器端变量；只保存到 Render 后端服务的 Secret 环境变量。
+4. Cloudflare R2 的 endpoint 通常形如 `https://<account-id>.r2.cloudflarestorage.com`，区域可填写 `auto`。其他 S3 服务按供应商给出的 endpoint 和 region 配置。
+
+### 3.2 Render 环境变量
+
+在 `lexflow-api` 的 Environment 页面配置：
+
+```text
+STORAGE_PROVIDER=r2
+S3_ENDPOINT_URL=https://<account-id>.r2.cloudflarestorage.com
+S3_ACCESS_KEY_ID=<仅保存在 Render 的访问密钥 ID>
+S3_SECRET_ACCESS_KEY=<仅保存在 Render 的访问密钥>
+S3_BUCKET_NAME=<私有桶名称>
+S3_REGION=auto
+MAX_UPLOAD_SIZE_BYTES=20971520
+```
+
+标准 S3 兼容服务可将 `STORAGE_PROVIDER` 改为 `s3`。保存变量后手动部署当前版本。生产环境不要把 `STORAGE_PROVIDER` 留空或设置为 `local`；代码检测到 Render 环境但没有该变量时会拒绝文件存储请求，避免静默回退到实例文件系统。
+
+### 3.3 云端验证
+
+1. 新建测试案件并上传一个小型 TXT、PDF 或 DOCX。
+2. 材料页应显示存储提供方、大小、类型、状态和上传时间，状态最终为“已就绪”。
+3. 在对象存储控制台确认对象键符合 `cases/<case_id>/documents/<document_id>/<checksum>-<filename>`。
+4. 点击下载，确认能够通过短期签名地址取得原文件；签名地址约 5 分钟后应失效。
+5. 删除测试材料，确认数据库记录和桶内对象同时消失。
+6. 检查 Render 日志，确认错误信息未输出访问密钥。不要把签名 URL 粘贴到公开日志，因为它在有效期内具有临时读取权限。
+
+若上传失败，Document 会保留错误状态以便排查；若解析失败，原始对象仍会保留。旧 `legacy_local` 材料不会自动迁移，页面会说明原始文件可能不可用，但继续展示已解析文本。
 
 ## 本地环境变量
 
@@ -277,7 +311,10 @@ pytest -q
 - `DATABASE_URL`：PostgreSQL 连接地址；不设置时继续使用本地 SQLite。
 - `CORS_ORIGINS`：允许访问 API 的前端地址，多个地址可使用逗号或空格分隔。
 - `CORS_ORIGIN_REGEX`：可选的前端地址正则；需要使用 Vercel 预览部署时可设为 `https://.*\.vercel\.app`。
-- `UPLOAD_DIR`：上传解析文件的临时目录。
+- `STORAGE_PROVIDER`：本地为 `local`；生产使用 `r2` 或 `s3`。
+- `UPLOAD_DIR`：仅在 `STORAGE_PROVIDER=local` 时使用的本地目录。
+- `S3_ENDPOINT_URL`、`S3_ACCESS_KEY_ID`、`S3_SECRET_ACCESS_KEY`、`S3_BUCKET_NAME`、`S3_REGION`：私有 S3 兼容对象存储配置。
+- `MAX_UPLOAD_SIZE_BYTES`：单文件大小上限，默认 `20971520`（20 MiB）。
 - `LLM_PROVIDER`：模型提供方，支持 `openai`（默认）或 `zhipu`。
 - `OPENAI_API_KEY`、`OPENAI_MODEL`：OpenAI 的服务端密钥和模型名称，默认模型为 `gpt-4o-mini`。
 - `ZHIPU_API_KEY`、`ZHIPU_MODEL`：智谱 AI 的服务端密钥和模型名称，默认模型为 `glm-4-flash-250414`。

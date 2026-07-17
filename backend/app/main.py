@@ -3,13 +3,15 @@ from __future__ import annotations
 import json
 import os
 import re
-import shutil
+import hashlib
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
+from urllib.parse import quote
 
-from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from sqlalchemy import inspect, text
 from sqlalchemy.orm import Session
 
@@ -26,13 +28,18 @@ from .agents.research_agent import generate_analysis
 from .agents.risk_agent import generate_risk
 from .agents.similarity_search import recommend_memories
 from .database import Base, SessionLocal, engine, get_db
+from .services.document_files import PreparedUpload, prepare_upload
+from .services.storage import (
+    StorageError,
+    StorageService,
+    build_object_key,
+    get_storage_service,
+)
 from .utils import from_json, join_tags, log_event, split_tags, to_json
 
 
 APP_DIR = Path(__file__).resolve().parent
-UPLOAD_DIR = Path(os.getenv("UPLOAD_DIR", str(APP_DIR / "uploads")))
 MOCK_DIR = APP_DIR / "mock"
-UPLOAD_DIR.mkdir(exist_ok=True)
 
 app = FastAPI(title="LexFlow MVP API", version="0.1.0")
 
@@ -236,8 +243,129 @@ def serialize_document(document: models.Document) -> dict:
         "storage_key": document.storage_key,
         "processing_status": document.processing_status,
         "extraction_error": document.extraction_error,
-        "updated_at": document.updated_at,
+        "updated_at": document.updated_at or document.uploaded_at,
     }
+
+
+def _set_document_error(
+    db: Session,
+    document_id: int,
+    status: str,
+    message: str,
+) -> models.Document:
+    db.rollback()
+    document = db.query(models.Document).filter(models.Document.id == document_id).first()
+    if not document:
+        raise HTTPException(status_code=500, detail="材料记录未能保存")
+    document.processing_status = status
+    document.extraction_error = message[:1000]
+    document.updated_at = datetime.utcnow()
+    db.commit()
+    db.refresh(document)
+    return document
+
+
+def persist_prepared_document(
+    db: Session,
+    case_id: int,
+    prepared: PreparedUpload,
+    storage: Optional[StorageService] = None,
+) -> models.Document:
+    storage = storage or get_storage_service()
+    duplicate = db.query(models.Document).filter(
+        models.Document.case_id == case_id,
+        models.Document.checksum == prepared.checksum,
+        models.Document.processing_status != "upload_failed",
+    ).first()
+    if duplicate:
+        prepared.close()
+        raise HTTPException(
+            status_code=409,
+            detail=f"同一案件已上传相同文件：{duplicate.original_filename or duplicate.filename}",
+        )
+
+    document = models.Document(
+        case_id=case_id,
+        filename=prepared.safe_filename,
+        original_filename=prepared.original_filename,
+        file_type=prepared.file_type,
+        mime_type=prepared.mime_type,
+        file_size=prepared.file_size,
+        checksum=prepared.checksum,
+        storage_provider=storage.provider_name,
+        processing_status="uploaded",
+        raw_text="",
+        parsed_json="{}",
+        updated_at=datetime.utcnow(),
+    )
+    db.add(document)
+    try:
+        db.commit()
+        db.refresh(document)
+    except Exception as exc:
+        db.rollback()
+        prepared.close()
+        raise HTTPException(status_code=500, detail="材料记录创建失败，未上传原始文件") from exc
+
+    key = build_object_key(case_id, document.id, prepared.checksum, prepared.safe_filename)
+    object_uploaded = False
+    try:
+        storage.put(key, prepared.stream, prepared.mime_type)
+        object_uploaded = True
+        document.storage_key = key
+        document.processing_status = "parsing"
+        document.extraction_error = ""
+        document.updated_at = datetime.utcnow()
+        db.commit()
+        db.refresh(document)
+    except StorageError as exc:
+        # A provider may finish writing and then fail while acknowledging the
+        # upload. Deleting an absent key is safe for supported backends, so
+        # always attempt compensation instead of relying on the local flag.
+        try:
+            storage.delete(key)
+        except StorageError:
+            pass
+        prepared.close()
+        _set_document_error(db, document.id, "upload_failed", str(exc))
+        raise HTTPException(status_code=502, detail="原始文件上传失败，材料记录已保留以便重试") from exc
+    except Exception as exc:
+        if object_uploaded:
+            try:
+                storage.delete(key)
+            except StorageError:
+                pass
+        prepared.close()
+        _set_document_error(db, document.id, "upload_failed", "上传后数据库状态保存失败")
+        raise HTTPException(status_code=500, detail="材料状态保存失败，已清理上传对象") from exc
+
+    temporary: Optional[Path] = None
+    try:
+        temporary = storage.download_to_temp(key, suffix=f".{prepared.file_type}")
+        parsed = parse_document(temporary)
+        document.raw_text = parsed["raw_text"]
+        document.parsed_json = to_json(parsed["parsed_json"])
+        document.processing_status = "ready"
+        document.extraction_error = ""
+        document.updated_at = datetime.utcnow()
+        db.commit()
+        db.refresh(document)
+    except Exception as exc:
+        document = _set_document_error(db, document.id, "parse_failed", f"文件解析失败：{exc}")
+    finally:
+        prepared.close()
+        if temporary:
+            temporary.unlink(missing_ok=True)
+    return document
+
+
+def persist_upload(
+    db: Session,
+    case_id: int,
+    upload: UploadFile,
+    storage: Optional[StorageService] = None,
+) -> models.Document:
+    return persist_prepared_document(db, case_id, prepare_upload(upload), storage)
 
 
 def serialize_output(output: models.AIOutput, db: Optional[Session] = None) -> dict:
@@ -1017,6 +1145,24 @@ def create_ai_case(
 ):
     if not fact_text.strip() and not files:
         raise HTTPException(status_code=400, detail="请粘贴案件事实或至少上传一份材料")
+    prepared_files: list[PreparedUpload] = []
+    try:
+        for file in files:
+            prepared_files.append(prepare_upload(file))
+        checksums = [item.checksum for item in prepared_files]
+        if len(checksums) != len(set(checksums)):
+            raise HTTPException(status_code=409, detail="本次选择中包含内容相同的重复文件")
+    except Exception:
+        for prepared in prepared_files:
+            prepared.close()
+        raise
+    try:
+        storage = get_storage_service()
+    except StorageError:
+        for prepared in prepared_files:
+            prepared.close()
+        raise HTTPException(status_code=503, detail="文件存储服务配置不完整")
+
     case = models.Case(
         title=title.strip(),
         claimant=claimant.strip() or "待识别",
@@ -1030,39 +1176,48 @@ def create_ai_case(
         workflow_mode="ai_case",
     )
     db.add(case)
-    db.commit()
-    db.refresh(case)
+    try:
+        db.commit()
+        db.refresh(case)
+    except Exception:
+        db.rollback()
+        for prepared in prepared_files:
+            prepared.close()
+        raise
     if fact_text.strip():
+        inline_bytes = fact_text.strip().encode("utf-8")
         db.add(models.Document(
             case_id=case.id,
             filename="现场输入案件事实.txt",
             original_filename="现场输入案件事实.txt",
             file_type="txt",
             mime_type="text/plain",
+            file_size=len(inline_bytes),
+            checksum=hashlib.sha256(inline_bytes).hexdigest(),
+            storage_provider="inline_text",
             raw_text=fact_text.strip(),
             processing_status="ready",
             parsed_json=to_json({"file_name": "现场输入案件事实.txt", "source": "现场粘贴"}),
         ))
-    case_dir = UPLOAD_DIR / str(case.id)
-    case_dir.mkdir(exist_ok=True)
-    for file in files:
-        safe_name = Path(file.filename or "案件材料").name
-        target = case_dir / safe_name
-        with target.open("wb") as buffer:
-            shutil.copyfileobj(file.file, buffer)
-        parsed = parse_document(target)
-        db.add(models.Document(
-            case_id=case.id,
-            filename=safe_name,
-            original_filename=safe_name,
-            file_type=target.suffix.replace(".", "") or "unknown",
-            mime_type=file.content_type or "application/octet-stream",
-            file_size=target.stat().st_size,
-            raw_text=parsed["raw_text"],
-            processing_status="ready",
-            parsed_json=to_json(parsed["parsed_json"]),
-        ))
     db.commit()
+    for prepared in prepared_files:
+        try:
+            document = persist_prepared_document(db, case.id, prepared, storage)
+            log_event(
+                db,
+                case.id,
+                "document_uploaded",
+                f"已持久保存材料：{document.original_filename}",
+                {"document_id": document.id, "processing_status": document.processing_status},
+            )
+        except HTTPException as exc:
+            log_event(
+                db,
+                case.id,
+                "document_upload_failed",
+                "一份案件材料未能完成持久化",
+                {"status_code": exc.status_code},
+            )
     unit = ensure_ai_case_workflow(db, case)[0]
     run_ai_fact_extraction(db, case, unit)
     db.commit()
@@ -1911,28 +2066,14 @@ def add_follow_up(case_id: int, payload: schemas.FollowUpCreate, db: Session = D
 @app.post("/cases/{case_id}/documents/upload", response_model=schemas.DocumentOut)
 def upload_document(case_id: int, file: UploadFile = File(...), db: Session = Depends(get_db)):
     require_case(db, case_id)
-    case_dir = UPLOAD_DIR / str(case_id)
-    case_dir.mkdir(exist_ok=True)
-    target = case_dir / file.filename
-    with target.open("wb") as buffer:
-        shutil.copyfileobj(file.file, buffer)
-
-    parsed = parse_document(target)
-    document = models.Document(
-        case_id=case_id,
-        filename=file.filename,
-        original_filename=file.filename,
-        file_type=target.suffix.replace(".", "") or "unknown",
-        mime_type=file.content_type or "application/octet-stream",
-        file_size=target.stat().st_size,
-        raw_text=parsed["raw_text"],
-        processing_status="ready",
-        parsed_json=to_json(parsed["parsed_json"]),
+    document = persist_upload(db, case_id, file)
+    log_event(
+        db,
+        case_id,
+        "document_uploaded",
+        f"已持久保存材料：{document.original_filename}",
+        {"document_id": document.id, "processing_status": document.processing_status},
     )
-    db.add(document)
-    db.commit()
-    db.refresh(document)
-    log_event(db, case_id, "document_uploaded", f"已上传并解析材料：{file.filename}", parsed["parsed_json"])
     record_human_trace(
         db,
         case_id=case_id,
@@ -1940,7 +2081,7 @@ def upload_document(case_id: int, file: UploadFile = File(...), db: Session = De
         object_type="材料",
         object_id=document.id,
         ai_suggestion="无 AI 原始建议",
-        human_revision=file.filename,
+        human_revision=document.original_filename,
         reason="人工上传案件材料",
         tags=["材料", "上传"],
     )
@@ -1953,6 +2094,92 @@ def list_documents(case_id: int, db: Session = Depends(get_db)):
     require_case(db, case_id)
     documents = db.query(models.Document).filter(models.Document.case_id == case_id).all()
     return [serialize_document(item) for item in documents]
+
+
+def require_document(db: Session, document_id: int) -> models.Document:
+    document = db.query(models.Document).filter(models.Document.id == document_id).first()
+    if not document:
+        raise HTTPException(status_code=404, detail="未找到材料")
+    return document
+
+
+def document_storage(document: models.Document) -> StorageService:
+    if document.storage_provider in {"legacy_local", "inline_text"} or not document.storage_key:
+        raise HTTPException(status_code=410, detail="旧材料或现场输入未保留可下载的原始文件")
+    try:
+        return get_storage_service(document.storage_provider)
+    except StorageError as exc:
+        raise HTTPException(status_code=503, detail="材料存储服务暂时不可用") from exc
+
+
+@app.get("/documents/{document_id}/download-url")
+def get_document_download_url(
+    document_id: int,
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    document = require_document(db, document_id)
+    storage = document_storage(document)
+    try:
+        if not storage.exists(document.storage_key):
+            raise HTTPException(status_code=410, detail="原始文件已不可用")
+        url = storage.create_presigned_download_url(document.storage_key, expires_in=300)
+    except StorageError as exc:
+        raise HTTPException(status_code=503, detail="暂时无法生成下载地址") from exc
+    if not url:
+        url = str(request.url_for("download_document", document_id=document.id))
+    return {"url": url, "expires_in": 300}
+
+
+@app.get("/documents/{document_id}/download", name="download_document")
+def download_document(document_id: int, db: Session = Depends(get_db)):
+    document = require_document(db, document_id)
+    storage = document_storage(document)
+    if document.storage_provider != "local":
+        raise HTTPException(status_code=400, detail="对象存储文件请先获取短期下载地址")
+    try:
+        stream = storage.open_stream(document.storage_key)
+    except StorageError as exc:
+        raise HTTPException(status_code=410, detail="原始文件已不可用") from exc
+    filename = quote(document.original_filename or document.filename)
+    return StreamingResponse(
+        stream,
+        media_type=document.mime_type,
+        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{filename}"},
+    )
+
+
+@app.delete("/cases/{case_id}/documents/{document_id}")
+def delete_document(case_id: int, document_id: int, db: Session = Depends(get_db)):
+    require_case(db, case_id)
+    document = db.query(models.Document).filter(
+        models.Document.id == document_id,
+        models.Document.case_id == case_id,
+    ).first()
+    if not document:
+        raise HTTPException(status_code=404, detail="未找到材料")
+    filename = document.original_filename or document.filename
+    if document.storage_key and document.storage_provider not in {"legacy_local", "inline_text"}:
+        storage = document_storage(document)
+        try:
+            storage.delete(document.storage_key)
+        except StorageError as exc:
+            raise HTTPException(status_code=503, detail="原始文件删除失败，材料记录未删除") from exc
+    record_human_trace(
+        db,
+        case_id=case_id,
+        action="删除材料",
+        object_type="材料",
+        object_id=document.id,
+        ai_suggestion="无 AI 原始建议",
+        human_revision=filename,
+        reason="人工删除案件材料及其原始文件",
+        tags=["材料", "删除"],
+    )
+    db.delete(document)
+    db.commit()
+    log_event(db, case_id, "document_deleted", f"已删除材料：{filename}")
+    return {"ok": True}
 
 
 @app.post("/cases/{case_id}/workflow/run-evidence", response_model=list[schemas.EvidenceOut])

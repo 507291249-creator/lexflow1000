@@ -11,5 +11,17 @@ services:
         sync: false
       - key: CORS_ORIGINS
         sync: false
-      - key: UPLOAD_DIR
-        value: /tmp/lexflow-uploads
+      - key: STORAGE_PROVIDER
+        sync: false
+      - key: S3_ENDPOINT_URL
+        sync: false
+      - key: S3_ACCESS_KEY_ID
+        sync: false
+      - key: S3_SECRET_ACCESS_KEY
+        sync: false
+      - key: S3_BUCKET_NAME
+        sync: false
+      - key: S3_REGION
+        sync: false
+      - key: MAX_UPLOAD_SIZE_BYTES
+        value: "20971520"

@@ -5,6 +5,7 @@ import {
   BookOpen,
   Check,
   ChevronRight,
+  Download,
   FileText,
   FileUp,
   Gavel,
@@ -14,6 +15,7 @@ import {
   RefreshCw,
   Save,
   Sparkles,
+  Trash2,
   X,
 } from "lucide-react";
 import {
@@ -22,6 +24,7 @@ import {
   CaseFact,
   CaseIssue,
   CaseWorkspace,
+  DocumentItem,
   MemoryItem,
   WorkUnit,
 } from "@/lib/api";
@@ -139,9 +142,32 @@ export default function CaseDetailPage({ params }: { params: { id: string } }) {
       form.append("file", file);
       await api(`/cases/${caseId}/documents/upload`, { method: "POST", body: form });
       await load();
+    } catch (uploadError) {
+      setError(requestErrorMessage(uploadError));
+    } finally {
+      setBusy("");
+      event.target.value = "";
+    }
+  }
+
+  async function downloadMaterial(item: DocumentItem) {
+    setBusy(`download:${item.id}`);
+    try {
+      const result = await api<{ url: string }>(`/documents/${item.id}/download-url`);
+      const anchor = document.createElement("a");
+      anchor.href = result.url;
+      anchor.rel = "noopener noreferrer";
+      anchor.click();
+    } catch (downloadError) {
+      setError(requestErrorMessage(downloadError));
     } finally {
       setBusy("");
     }
+  }
+
+  async function removeMaterial(item: DocumentItem) {
+    if (!window.confirm(`确认删除材料“${item.original_filename || item.filename}”吗？原始文件也会同步删除。`)) return;
+    await request(`/cases/${caseId}/documents/${item.id}`, "DELETE");
   }
 
   if (!workspace) return <div className="card p-6 text-sm text-slate-600">{error ? <div className="flex flex-wrap items-center justify-between gap-3"><span>{error}</span><button className="button-secondary" type="button" onClick={() => void load()}><RefreshCw size={16} />重新加载案件</button></div> : "正在加载案件工作台..."}</div>;
@@ -240,9 +266,7 @@ export default function CaseDetailPage({ params }: { params: { id: string } }) {
       {activeTab === "材料" && (
         <section className="card p-5">
           <div className="flex flex-wrap items-center justify-between gap-3"><div><h2 className="font-semibold text-ink">案件材料</h2><p className="mt-1 text-sm text-slate-500">上传后会进入材料理解与事实结构化工作单元。</p></div><label className="button-secondary cursor-pointer"><FileUp size={16} />{busy === "upload" ? "正在上传" : "上传材料"}<input className="hidden" type="file" accept=".txt,.pdf,.docx" onChange={upload} /></label></div>
-          <div className="mt-5 grid gap-3 md:grid-cols-2">
-            {workspace.documents.map((doc) => <article key={doc.id} className="rounded-md border border-line p-4"><div className="flex items-start justify-between gap-3"><div className="font-medium text-ink">{doc.filename}</div><span className="badge bg-slate-100 text-slate-600">{doc.file_type}</span></div><p className="mt-3 line-clamp-5 text-sm leading-6 text-slate-600">{doc.raw_text}</p></article>)}
-          </div>
+          <MaterialList documents={workspace.documents} busy={busy} onDownload={downloadMaterial} onDelete={removeMaterial} />
           <EvidenceTable items={workspace.evidences} />
         </section>
       )}
@@ -384,11 +408,33 @@ function AiCaseWorkspace({ caseId, workspace, onReload }: { caseId: number; work
       body.append("file", file);
       await api(`/cases/${caseId}/documents/upload`, { method: "POST", body });
       await onReload();
-    } catch {
-      setError("材料上传未完成，请检查文件后重试。");
+    } catch (uploadError) {
+      setError(requestErrorMessage(uploadError));
+    } finally {
+      setBusy("");
+      event.target.value = "";
+    }
+  }
+
+  async function downloadMaterial(item: DocumentItem) {
+    setBusy(`download:${item.id}`);
+    setError("");
+    try {
+      const result = await api<{ url: string }>(`/documents/${item.id}/download-url`);
+      const anchor = document.createElement("a");
+      anchor.href = result.url;
+      anchor.rel = "noopener noreferrer";
+      anchor.click();
+    } catch (downloadError) {
+      setError(requestErrorMessage(downloadError));
     } finally {
       setBusy("");
     }
+  }
+
+  async function removeMaterial(item: DocumentItem) {
+    if (!window.confirm(`确认删除材料“${item.original_filename || item.filename}”吗？原始文件也会同步删除。`)) return;
+    await request(`/cases/${caseId}/documents/${item.id}`, "DELETE");
   }
 
   return (
@@ -405,7 +451,7 @@ function AiCaseWorkspace({ caseId, workspace, onReload }: { caseId: number; work
 
       {tab === "工作流" && <section className="grid gap-4 lg:grid-cols-[0.8fr_1.2fr]"><div className="card p-5"><h2 className="font-semibold text-ink">现场分析路径</h2><div className="mt-5 space-y-3"><AiStep number="1" title="事实提取" status={factStepStatus} detail="基于现场输入和上传材料生成结构化事实。" /><AiStep number="2" title="人工确认事实" status={factsConfirmed ? "已完成" : "待确认"} detail="全部事实需接受、修改或驳回。" /><AiStep number="3" title="争点识别" status={issueStepStatus} detail="确认全部事实后，点击运行生成 AI 争点建议。" /><AiStep number="4" title="逐项法律分析" status={analysisStepStatus} detail={`${approvedAnalysisCount}/${analysisUnits.length} 项当前版本分析已批准。`} /><AiStep number="5" title="生成报告" status={reportStepStatus} detail={reportReady ? "当前已有可用于报告的已批准分析。" : "汇总当前版本的事实、争点和已批准分析。"} /></div>{reportReady && !report && <button className="button-primary mt-5 w-full" type="button" onClick={() => setTab("成果")}><FileText size={16} />前往生成法律分析报告</button>}</div><div className="card p-5"><h2 className="font-semibold text-ink">工作单元</h2><div className="mt-4 space-y-3">{workspace.work_units.map((unit) => { const runPath = `/cases/${caseId}/work-units/${unit.id}/run`; const blocked = unit.code === "issue_identification" && !factsConfirmed; const unitStatus = displayedUnitStatus(unit); return <div className="rounded-md border border-line p-4" key={unit.id}><div className="flex flex-wrap items-start justify-between gap-3"><div><div className="flex items-center gap-2"><h3 className="font-medium text-ink">{unit.title}</h3><span className={`badge ${statusClass[unitStatus] || "bg-slate-100 text-slate-600"}`}>{unitStatus}</span></div><p className="mt-1 text-sm text-slate-600">{unit.description}</p></div>{(unit.code === "fact_extraction" || unit.code === "issue_identification" || unit.code.startsWith("legal_analysis:")) && <button className="button-secondary" type="button" disabled={Boolean(busy) || blocked} title={blocked ? "请先确认全部事实" : undefined} onClick={() => request(runPath)}><Play size={16} />{busy === runPath ? "正在运行" : unitStatus === "失败" ? "重新运行" : "运行"}</button>}</div>{blocked && <p className="mt-3 text-xs text-amber-700">请先在“事实”页一键确认或逐项处理全部事实。</p>}{unitStatus === "失败" && <p className="mt-3 border-l-2 border-rose-500 bg-rose-50 px-3 py-2 text-xs text-rose-700">{String((unit.output_json.error as { message?: string } | undefined)?.message || "结构化输出失败，可重新运行。")}</p>}{unit.code.startsWith("legal_analysis:") && <p className="mt-3 text-xs text-slate-500">输入事实版本 {workspace.case.fact_version} · 争点版本 {workspace.case.issue_version}</p>}</div>; })}</div></div></section>}
 
-      {tab === "材料" && <section className="card p-5"><div className="flex flex-wrap items-center justify-between gap-3"><div><h2 className="font-semibold text-ink">原始材料</h2><p className="mt-1 text-sm text-slate-600">新增材料后可重新运行事实提取；已有分析不会被覆盖。</p></div><label className="button-secondary cursor-pointer"><FileUp size={16} />{busy === "upload" ? "正在上传" : "补充材料"}<input className="hidden" type="file" accept=".pdf,.docx,.txt" onChange={upload} /></label></div><div className="mt-5 divide-y divide-line">{workspace.documents.map((item) => <div key={item.id} className="py-3"><div className="font-medium text-ink">{item.filename}</div><p className="mt-1 whitespace-pre-wrap text-sm leading-6 text-slate-600">{item.raw_text.slice(0, 600) || "文件未能提取文本，请人工核验。"}</p></div>)}</div></section>}
+      {tab === "材料" && <section className="card p-5"><div className="flex flex-wrap items-center justify-between gap-3"><div><h2 className="font-semibold text-ink">原始材料</h2><p className="mt-1 text-sm text-slate-600">新增材料后可重新运行事实提取；已有分析不会被覆盖。</p></div><label className="button-secondary cursor-pointer"><FileUp size={16} />{busy === "upload" ? "正在上传" : "补充材料"}<input className="hidden" type="file" accept=".pdf,.docx,.txt" onChange={upload} /></label></div><MaterialList documents={workspace.documents} busy={busy} onDownload={downloadMaterial} onDelete={removeMaterial} /></section>}
 
       {tab === "事实" && <section className="space-y-4"><AiExtractionSummary output={latestFactOutput} outputs={workspace.ai_outputs.filter((item) => item.output_type === "fact_extraction")} /><div className="flex flex-wrap items-center justify-between gap-3"><p className="text-sm text-slate-600">可先一键确认全部 AI 提取事实，再按需要逐项修改或驳回。</p><button className="button-primary" type="button" disabled={Boolean(busy) || !workspace.facts.some((item) => item.status === "待确认")} onClick={() => request(`/cases/${caseId}/facts/confirm-all`, "POST", { reason: "人工复核 AI 提取事实后批量确认，后续按需逐项修订。" })}><Check size={16} />{busy === `/cases/${caseId}/facts/confirm-all` ? "正在确认" : "一键确认全部事实"}</button></div><div className="grid gap-4 lg:grid-cols-2">{workspace.facts.map((fact) => <AiFactCard key={fact.id} fact={fact} disabled={Boolean(busy)} confirming={busy === `/facts/${fact.id}/review`} onAccept={() => request(`/facts/${fact.id}/review`, "POST", { action: "接受", reason: "人工核验现场材料后确认该事实。" })} onReject={() => request(`/facts/${fact.id}/review`, "POST", { action: "驳回", reason: "材料不足以支持该事实。" })} onEdit={() => setFactEdit(fact)} />)}</div>{factEdit && <AiFactEditor fact={factEdit} onClose={() => setFactEdit(null)} onSave={(text, reason) => request(`/facts/${factEdit.id}/review`, "POST", { action: "修改", human_fact: text, reason }).then((completed) => { if (completed) setFactEdit(null); return completed; })} />}</section>}
 
@@ -421,6 +467,45 @@ function AiCaseWorkspace({ caseId, workspace, onReload }: { caseId: number; work
 }
 
 function AiStep({ number, title, status, detail }: { number: string; title: string; status: string; detail: string }) { return <div className="flex gap-3"><span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-[#eaf3f8] text-xs font-semibold text-court">{number}</span><div className="min-w-0 flex-1"><div className="flex flex-wrap items-center gap-2"><span className="font-medium text-ink">{title}</span><span className={`badge ${statusClass[status] || "bg-slate-100 text-slate-600"}`}>{status}</span></div><p className="mt-1 text-sm leading-6 text-slate-600">{detail}</p></div></div>; }
+
+const materialStatus: Record<string, string> = {
+  uploaded: "已上传",
+  parsing: "解析中",
+  parsed: "已解析",
+  analyzing: "分析中",
+  ready: "已就绪",
+  parse_failed: "解析失败",
+  analysis_failed: "分析失败",
+  upload_failed: "上传失败",
+};
+
+function formatFileSize(value: number | null) {
+  if (value === null) return "大小未知";
+  if (value < 1024) return `${value} B`;
+  if (value < 1024 * 1024) return `${(value / 1024).toFixed(1)} KB`;
+  return `${(value / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function MaterialList({
+  documents,
+  busy,
+  onDownload,
+  onDelete,
+}: {
+  documents: DocumentItem[];
+  busy: string;
+  onDownload: (item: DocumentItem) => void;
+  onDelete: (item: DocumentItem) => void;
+}) {
+  if (!documents.length) return <div className="mt-5 rounded-md border border-dashed border-line p-6 text-center text-sm text-slate-500">尚未上传案件材料。</div>;
+  return <div className="mt-5 space-y-3">{documents.map((item) => {
+    const legacy = item.storage_provider === "legacy_local";
+    const inline = item.storage_provider === "inline_text";
+    const downloadable = Boolean(item.storage_key) && !legacy && !inline && item.processing_status !== "upload_failed";
+    const failed = item.processing_status.endsWith("failed");
+    return <article key={item.id} className="rounded-md border border-line p-4"><div className="flex flex-wrap items-start justify-between gap-3"><div className="min-w-0"><div className="break-all font-medium text-ink">{item.original_filename || item.filename}</div><div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-slate-500"><span>{item.file_type.toUpperCase()}</span><span>{formatFileSize(item.file_size)}</span><span>存储：{legacy ? "旧本地材料" : inline ? "现场输入" : item.storage_provider.toUpperCase()}</span><span>{new Date(item.uploaded_at).toLocaleString("zh-CN")}</span></div></div><span className={`badge ${failed ? "bg-rose-50 text-rose-700" : item.processing_status === "ready" ? "bg-[#e7f1ef] text-mint" : "bg-amber-50 text-amber-700"}`}>{materialStatus[item.processing_status] || item.processing_status}</span></div>{legacy && <p className="mt-3 border-l-2 border-amber-500 bg-amber-50 px-3 py-2 text-sm text-amber-800">旧材料：原始文件可能已不可用，已保留解析文本。</p>}{inline && <p className="mt-3 text-sm text-slate-500">该条目来自现场粘贴内容，没有独立原始文件。</p>}{item.extraction_error && <p className="mt-3 border-l-2 border-rose-500 bg-rose-50 px-3 py-2 text-sm text-rose-700">{item.extraction_error}</p>}<p className="mt-3 line-clamp-5 whitespace-pre-wrap text-sm leading-6 text-slate-600">{item.raw_text || "尚未提取文本，请根据处理状态核验材料。"}</p><div className="mt-4 flex flex-wrap gap-2"><button className="button-secondary" type="button" disabled={!downloadable || Boolean(busy)} title={downloadable ? "下载原始文件" : "该材料没有可用的原始文件"} onClick={() => onDownload(item)}><Download size={16} />{busy === `download:${item.id}` ? "正在获取" : "下载"}</button><button className="button-secondary" type="button" disabled={Boolean(busy)} onClick={() => onDelete(item)}><Trash2 size={16} />删除</button></div></article>;
+  })}</div>;
+}
 
 function AiOverview({ workspace, factsConfirmed, analysisCount, onOpen }: { workspace: CaseWorkspace; factsConfirmed: boolean; analysisCount: number; onOpen: (value: Tab) => void }) { const confirmedIssues = workspace.issues.filter((item) => ["人工确认", "分析中", "已完成"].includes(item.status)).length; const reportReady = Boolean(workspace.workflow_state?.report_ready); const nextTab: Tab = !factsConfirmed ? "事实" : confirmedIssues === 0 ? "争点" : reportReady ? "成果" : "分析"; const nextText = !factsConfirmed ? "先完成全部事实的接受、修改或驳回。" : confirmedIssues === 0 ? "确认需要进入分析的争点。" : reportReady ? "当前已有获批分析，可以生成法律分析报告。" : "运行并复核当前事实、争点版本对应的逐项法律分析。"; return <div className="grid gap-5 lg:grid-cols-[1.2fr_0.8fr]"><section className="card p-5"><h2 className="font-semibold text-ink">案件摘要</h2><p className="mt-4 whitespace-pre-wrap text-sm leading-7 text-slate-700">{workspace.case.summary}</p><div className="mt-5 grid grid-cols-3 gap-3"><Metric label="确认事实" value={workspace.facts.filter((item) => item.status === "已确认").length} /><Metric label="确认争点" value={confirmedIssues} /><Metric label="分析任务" value={analysisCount} /></div></section><section className="card p-5"><h2 className="font-semibold text-ink">当前下一步</h2><p className="mt-2 text-sm leading-6 text-slate-600">{nextText}</p><button className="button-primary mt-5" onClick={() => onOpen(nextTab)}><ChevronRight size={16} />继续处理</button></section></div>; }
 

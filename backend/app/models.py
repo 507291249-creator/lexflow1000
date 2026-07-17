@@ -63,7 +63,7 @@ class Document(Base):
     checksum = Column(String(64), nullable=True, index=True)
     storage_provider = Column(String(40), nullable=False, default="legacy_local", server_default="legacy_local")
     storage_key = Column(String(512), nullable=True)
-    # uploaded/parsing/parsed/analyzing/ready/parse_failed/analysis_failed
+    # uploaded/parsing/parsed/analyzing/ready/parse_failed/analysis_failed/upload_failed
     processing_status = Column(String(40), nullable=False, default="uploaded", server_default="uploaded", index=True)
     extraction_error = Column(Text, nullable=False, default="", server_default="")
     updated_at = Column(
