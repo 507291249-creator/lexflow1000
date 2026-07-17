@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import { ArrowRight, BookOpen, GitBranch, Play, Scale } from "lucide-react";
+import { ArrowRight, BookOpen, GitBranch, Scale } from "lucide-react";
 import { api, CaseItem, MemoryItem } from "@/lib/api";
 
 export default function DashboardPage() {
@@ -40,19 +40,13 @@ export default function DashboardPage() {
 
       <section className="grid gap-6 lg:grid-cols-[1.4fr_0.8fr]">
         <div className="card p-6">
-          <div className="mb-5 flex items-start justify-between gap-4">
+          <div className="mb-5">
             <div>
               <h1 className="text-2xl font-semibold text-ink">劳动仲裁 AI 工作流</h1>
               <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-600">
                 从案件材料进入系统，到证据结构化、法律分析、文书初稿、人工修订和法律知识库复用提示，形成可追溯的演示闭环。
               </p>
             </div>
-            {demoCase && (
-              <Link href={`/cases/${demoCase.id}`} className="button-primary whitespace-nowrap">
-                <Play size={16} />
-                打开演示案件
-              </Link>
-            )}
           </div>
 
           <div className="grid gap-3 md:grid-cols-3">
