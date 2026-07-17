@@ -57,12 +57,22 @@ app.add_middleware(
 
 @app.on_event("startup")
 def startup() -> None:
-    Base.metadata.create_all(bind=engine)
-    ensure_existing_schema()
+    # Temporary compatibility bridge. Alembic owns all Sprint 1A additions;
+    # create_all and the legacy ALTER helper will be removed after two stable
+    # production migration cycles.
+    # Keep automatic schema bootstrapping only for local SQLite development.
+    # PostgreSQL must be migrated before the application starts; otherwise
+    # create_all could create fact_sources ahead of revision 0002 and make the
+    # audited migration fail with an "already exists" conflict.
+    if engine.dialect.name == "sqlite":
+        Base.metadata.create_all(bind=engine)
+        ensure_existing_schema()
     seed_demo_data()
 
 
 def ensure_existing_schema() -> None:
+    # Do not add Alembic-managed Document or FactSource fields here. Existing
+    # deployments must stamp 0001_baseline and upgrade to head before startup.
     additions = {
         "cases": {
             "case_no": "TEXT NOT NULL DEFAULT ''",
@@ -141,8 +151,11 @@ def seed_demo_data() -> None:
             document = models.Document(
                 case_id=case.id,
                 filename="sample_case.txt",
+                original_filename="sample_case.txt",
                 file_type="txt",
+                mime_type="text/plain",
                 raw_text=sample_text,
+                processing_status="ready",
                 parsed_json=to_json({
                     "file_name": "sample_case.txt",
                     "file_type": "txt",
@@ -215,6 +228,15 @@ def serialize_document(document: models.Document) -> dict:
         "raw_text": document.raw_text,
         "parsed_json": from_json(document.parsed_json, {}),
         "uploaded_at": document.uploaded_at,
+        "original_filename": document.original_filename,
+        "mime_type": document.mime_type,
+        "file_size": document.file_size,
+        "checksum": document.checksum,
+        "storage_provider": document.storage_provider,
+        "storage_key": document.storage_key,
+        "processing_status": document.processing_status,
+        "extraction_error": document.extraction_error,
+        "updated_at": document.updated_at,
     }
 
 
@@ -1014,8 +1036,11 @@ def create_ai_case(
         db.add(models.Document(
             case_id=case.id,
             filename="现场输入案件事实.txt",
+            original_filename="现场输入案件事实.txt",
             file_type="txt",
+            mime_type="text/plain",
             raw_text=fact_text.strip(),
+            processing_status="ready",
             parsed_json=to_json({"file_name": "现场输入案件事实.txt", "source": "现场粘贴"}),
         ))
     case_dir = UPLOAD_DIR / str(case.id)
@@ -1029,8 +1054,12 @@ def create_ai_case(
         db.add(models.Document(
             case_id=case.id,
             filename=safe_name,
+            original_filename=safe_name,
             file_type=target.suffix.replace(".", "") or "unknown",
+            mime_type=file.content_type or "application/octet-stream",
+            file_size=target.stat().st_size,
             raw_text=parsed["raw_text"],
+            processing_status="ready",
             parsed_json=to_json(parsed["parsed_json"]),
         ))
     db.commit()
@@ -1892,8 +1921,12 @@ def upload_document(case_id: int, file: UploadFile = File(...), db: Session = De
     document = models.Document(
         case_id=case_id,
         filename=file.filename,
+        original_filename=file.filename,
         file_type=target.suffix.replace(".", "") or "unknown",
+        mime_type=file.content_type or "application/octet-stream",
+        file_size=target.stat().st_size,
         raw_text=parsed["raw_text"],
+        processing_status="ready",
         parsed_json=to_json(parsed["parsed_json"]),
     )
     db.add(document)
