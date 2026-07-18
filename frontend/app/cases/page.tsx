@@ -1,116 +1,96 @@
 "use client";
 
 import Link from "next/link";
-import { FormEvent, useEffect, useState } from "react";
-import { ArrowRight, Plus, Sparkles } from "lucide-react";
-import { api, CaseItem } from "@/lib/api";
+import { useEffect, useMemo, useState } from "react";
+import { ArrowRight, Clock3, Search, Sparkles } from "lucide-react";
+import { api, type CaseItem, type CaseWorkspace } from "@/lib/api";
+import { WORKFLOW_STEPS, getWorkflowStepState } from "@/lib/workflow-config";
+import { EntityCode, ErrorState, LoadingState, PageHeading, ReasoningStatusBadge } from "@/components/ui/ReasoningUI";
+
+type CaseSnapshot = {
+  stage: string;
+  status: "ai_generated" | "pending_review" | "human_confirmed" | "rerun_required" | "failed";
+  pending: number;
+  latestAction: string;
+};
+
+function summarizeWorkspace(workspace: CaseWorkspace): CaseSnapshot {
+  const states = WORKFLOW_STEPS.map((step) => ({ step, state: getWorkflowStepState(workspace, step.code) }));
+  const current = states.find(({ state }) => !["human_confirmed"].includes(state)) || states[states.length - 1];
+  const pendingFacts = workspace.facts.filter((item) => item.status === "待确认").length;
+  const pendingIssues = workspace.issues.filter((item) => !["人工确认", "分析中", "已完成"].includes(item.status)).length;
+  const pendingAnalysis = workspace.ai_outputs.filter((item) => item.output_type === "legal_analysis" && !["已接受", "已修改"].includes(item.review_status)).length;
+  const latest = [...workspace.ai_outputs].sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())[0];
+  const mapped = current.state === "failed" ? "failed" : current.state === "rerun_required" ? "rerun_required" : current.state === "pending_review" ? "pending_review" : current.state === "human_confirmed" ? "human_confirmed" : "ai_generated";
+  return { stage: current.step.title, status: mapped, pending: pendingFacts + pendingIssues + pendingAnalysis, latestAction: latest ? `${latest.title} · V${latest.version}` : "尚未生成 AI 输出" };
+}
 
 export default function CasesPage() {
   const [cases, setCases] = useState<CaseItem[]>([]);
-  const emptyForm = {
-    title: "", claimant: "", employer: "", claim_amount: "", summary: "", case_no: "", case_type: "劳动仲裁",
-    stage: "材料收集", handler: "", next_follow_up_at: "", next_action: ""
-  };
-  const [form, setForm] = useState(emptyForm);
+  const [snapshots, setSnapshots] = useState<Record<number, CaseSnapshot>>({});
+  const [query, setQuery] = useState("");
+  const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
-  const load = async () => {
+  async function load() {
+    setLoading(true);
     setError("");
     try {
-      setCases(await api<CaseItem[]>("/cases"));
+      const caseItems = await api<CaseItem[]>("/cases");
+      setCases(caseItems);
+      const settled = await Promise.allSettled(caseItems.map((item) => api<CaseWorkspace>(`/cases/${item.id}/workspace`)));
+      const next: Record<number, CaseSnapshot> = {};
+      settled.forEach((result, index) => { if (result.status === "fulfilled") next[caseItems[index].id] = summarizeWorkspace(result.value); });
+      setSnapshots(next);
     } catch {
-      setError("暂时无法读取案件列表，请确认后端服务已启动。");
-    }
-  };
-
-  useEffect(() => { void load(); }, []);
-
-  async function submit(event: FormEvent) {
-    event.preventDefault();
-    try {
-      await api<CaseItem>("/cases", { method: "POST", body: JSON.stringify(form) });
-      setForm(emptyForm);
-      await load();
-    } catch {
-      setError("创建案件失败，请确认后端服务已正常运行后重试。");
+      setError("暂时无法读取案件分析工作区，请等待后端服务唤醒后重试。");
+    } finally {
+      setLoading(false);
     }
   }
 
-  return (
-    <div className="space-y-4">
-      {error && (
-        <div role="alert" className="flex items-center justify-between gap-3 border-l-2 border-amber-500 bg-white px-4 py-3 text-sm text-slate-600">
-          <span>{error}</span>
-          <button type="button" className="shrink-0 font-medium text-court hover:underline" onClick={load}>重新连接</button>
-        </div>
-      )}
-      <div className="grid gap-6 lg:grid-cols-[0.9fr_1.4fr]">
-        <section className="card p-5 lg:col-span-2">
-          <div className="flex flex-wrap items-center justify-between gap-4"><div><h1 className="text-lg font-semibold text-ink">AI 案件工作流</h1><p className="mt-1 text-sm text-slate-500">从现场输入事实或上传材料开始，逐步完成事实确认、争点确认和逐项法律分析。</p></div><Link href="/cases/new" className="button-primary"><Sparkles size={16} />新建 AI 案件</Link></div>
-        </section>
-        <form onSubmit={submit} className="card p-5">
-          <h1 className="text-lg font-semibold text-ink">案件登记</h1>
-          <p className="mt-1 text-sm text-slate-500">登记基础信息并设置第一项跟进安排。</p>
-          <div className="mt-4 grid gap-3 sm:grid-cols-2">
-            <Input label="案件名称" value={form.title} onChange={(value) => setForm({ ...form, title: value })} />
-            <Input label="案件编号" value={form.case_no} onChange={(value) => setForm({ ...form, case_no: value })} required={false} />
-            <Input label="申请人" value={form.claimant} onChange={(value) => setForm({ ...form, claimant: value })} />
-            <Input label="被申请人" value={form.employer} onChange={(value) => setForm({ ...form, employer: value })} />
-            <Select label="案件类型" value={form.case_type} onChange={(value) => setForm({ ...form, case_type: value })} options={["劳动仲裁", "劳动诉讼", "咨询事项"]} />
-            <Select label="当前阶段" value={form.stage} onChange={(value) => setForm({ ...form, stage: value })} options={["材料收集", "法律分析", "文书准备", "已立案", "庭审准备", "结案归档"]} />
-            <Input label="承办人" value={form.handler} onChange={(value) => setForm({ ...form, handler: value })} required={false} />
-            <Input label="主张金额" value={form.claim_amount} onChange={(value) => setForm({ ...form, claim_amount: value })} required={false} />
-            <Input label="下次跟进日期" value={form.next_follow_up_at} onChange={(value) => setForm({ ...form, next_follow_up_at: value })} required={false} type="date" />
-            <Input label="下一步行动" value={form.next_action} onChange={(value) => setForm({ ...form, next_action: value })} required={false} />
-          </div>
-          <label className="mt-3 block">
-            <span className="text-xs font-medium text-slate-600">案件摘要</span>
-            <textarea className="mt-1 min-h-28 w-full rounded-md border border-line px-3 py-2 text-sm" value={form.summary} onChange={(e) => setForm({ ...form, summary: e.target.value })} />
-          </label>
-          <button className="button-primary mt-4 w-full" type="submit">
-            <Plus size={16} />
-            登记案件
-          </button>
-        </form>
+  useEffect(() => { void load(); }, []);
+  const filtered = useMemo(() => cases.filter((item) => `${item.title} ${item.case_type} ${item.summary}`.toLowerCase().includes(query.toLowerCase())), [cases, query]);
 
-        <section className="card p-5">
-        <h1 className="text-lg font-semibold text-ink">案件列表</h1>
-        <div className="mt-4 divide-y divide-line">
-          {cases.map((item) => (
-            <Link key={item.id} href={`/cases/${item.id}`} className="flex items-center justify-between gap-4 py-4 hover:bg-slate-50">
-              <div>
-                <div className="font-medium text-ink">{item.title}</div>
-                <div className="mt-1 text-sm text-slate-500">{item.case_no || "未编号"} · {item.claimant} 诉 {item.employer}</div>
-                <div className="mt-1 text-xs text-slate-500">{item.stage} · {item.handler || "承办人待分配"} · {item.next_follow_up_at || "暂未设置跟进日期"}</div>
-              </div>
-              <span className="flex items-center gap-2 text-sm text-court">
-                进入工作台 <ArrowRight size={15} />
-              </span>
-            </Link>
-          ))}
-        </div>
-        </section>
+  return (
+    <div className="mx-auto max-w-7xl space-y-6">
+      <PageHeading eyebrow="案件分析" title="推理工作区" description="按当前推理阶段、待复核对象和最近 AI 动作继续案件，不在主界面堆叠案件管理字段。" action={<Link href="/cases/new" className="button-primary"><Sparkles size={16} />开始法律分析</Link>} />
+      <div className="flex items-center gap-3 rounded-md border border-line bg-white px-3 py-2">
+        <Search size={17} className="text-slate-400" />
+        <input className="w-full border-0 bg-transparent text-sm shadow-none focus:shadow-none" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索案件名称、类型或摘要" />
+        <span className="shrink-0 text-xs text-slate-400">{filtered.length} 个工作区</span>
       </div>
+      {loading && <LoadingState label="正在读取案件推理进度" />}
+      {error && <ErrorState message={error} onRetry={() => void load()} />}
+      {!loading && !error && !filtered.length && <div className="empty-state"><div><div className="font-medium text-ink">没有匹配的案件</div><p>创建一个新的法律分析，或调整搜索条件。</p></div></div>}
+      <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+        {filtered.map((item) => {
+          const snapshot = snapshots[item.id];
+          return (
+            <Link href={`/cases/${item.id}`} key={item.id} className="group reasoning-card flex min-h-64 flex-col transition hover:border-[#8fb3c8] hover:shadow-sm">
+              <div className="flex items-start justify-between gap-3">
+                <EntityCode kind="case" id={item.id} />
+                <ReasoningStatusBadge status={snapshot?.status || "ai_generated"} label={snapshot ? undefined : "读取中"} />
+              </div>
+              <h2 className="mt-4 text-base font-semibold leading-6 text-ink">{item.title}</h2>
+              <p className="mt-2 line-clamp-2 text-sm leading-6 text-slate-600">{item.summary || item.raw_facts || "尚未形成案件摘要。"}</p>
+              <div className="mt-4 grid grid-cols-3 gap-2 border-y border-line py-3 text-center">
+                <Metric label="当前阶段" value={snapshot?.stage || "读取中"} />
+                <Metric label="待处理" value={String(snapshot?.pending ?? "-")} />
+                <Metric label="版本" value={`F${item.fact_version} / I${item.issue_version}`} />
+              </div>
+              <div className="mt-auto flex items-end justify-between gap-3 pt-4">
+                <div className="min-w-0"><div className="flex items-center gap-1 text-[11px] text-slate-400"><Clock3 size={12} />最近 AI 动作</div><div className="mt-1 truncate text-xs text-slate-600">{snapshot?.latestAction || "正在读取"}</div></div>
+                <ArrowRight size={17} className="shrink-0 text-slate-400 transition group-hover:translate-x-0.5 group-hover:text-court" />
+              </div>
+            </Link>
+          );
+        })}
+      </section>
     </div>
   );
 }
 
-function Input({ label, value, onChange, required = true, type = "text" }: { label: string; value: string; onChange: (value: string) => void; required?: boolean; type?: string }) {
-  return (
-    <label className="block">
-      <span className="text-xs font-medium text-slate-600">{label}</span>
-      <input type={type} className="mt-1 w-full rounded-md border border-line px-3 py-2 text-sm" value={value} onChange={(e) => onChange(e.target.value)} required={required} />
-    </label>
-  );
-}
-
-function Select({ label, value, onChange, options }: { label: string; value: string; onChange: (value: string) => void; options: string[] }) {
-  return (
-    <label className="block">
-      <span className="text-xs font-medium text-slate-600">{label}</span>
-      <select className="mt-1 w-full rounded-md border border-line bg-white px-3 py-2 text-sm" value={value} onChange={(e) => onChange(e.target.value)}>
-        {options.map((item) => <option key={item} value={item}>{item}</option>)}
-      </select>
-    </label>
-  );
+function Metric({ label, value }: { label: string; value: string }) {
+  return <div className="min-w-0"><div className="text-[11px] text-slate-400">{label}</div><div className="mt-1 truncate text-xs font-semibold text-ink">{value}</div></div>;
 }

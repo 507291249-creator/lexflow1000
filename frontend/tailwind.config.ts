@@ -6,10 +6,9 @@ const config: Config = {
     extend: {
       colors: {
         ink: "#172033",
-        line: "#d8dee8",
-        court: "#1f4f75",
-        mint: "#2f7d70",
-        amber: "#a46318"
+        line: "#d8e0e8",
+        court: "#1f587c",
+        mint: "#267466"
       }
     }
   },

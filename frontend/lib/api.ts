@@ -56,6 +56,15 @@ export type DocumentItem = {
   raw_text: string;
   parsed_json: Record<string, unknown>;
   uploaded_at: string;
+  original_filename: string;
+  mime_type: string;
+  file_size: number | null;
+  checksum: string | null;
+  storage_provider: string;
+  storage_key: string | null;
+  processing_status: string;
+  extraction_error: string;
+  updated_at: string;
 };
 
 export type Trace = {

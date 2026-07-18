@@ -1,0 +1,31 @@
+"use client";
+
+import { useEffect, useState } from "react";
+import { FileText } from "lucide-react";
+import type { AIOutput, CaseWorkspace } from "@/lib/api";
+import { getWorkflowStepConfig } from "@/lib/workflow-config";
+import { EntityCode } from "@/components/ui/ReasoningUI";
+import { EmptyState, PanelHeading, StatusBadge } from "./shared";
+
+type Request = (path: string, method?: string, body?: unknown) => Promise<boolean>;
+
+function LegacyDraft({ output, busy, request }: { output: AIOutput; busy: string; request: Request }) {
+  const [draft, setDraft] = useState(output.reviewed_content || output.content);
+  const [reason, setReason] = useState("人工复核文书初稿。");
+  useEffect(() => setDraft(output.reviewed_content || output.content), [output.id, output.reviewed_content, output.content]);
+  const submit = (action: string, human_revision = "") => request(`/ai-outputs/${output.id}/review`, "POST", { action, human_revision, reason, supplementary_material: "" });
+  return <section className="reasoning-card"><div className="flex items-center justify-between gap-3"><div className="flex items-center gap-2"><EntityCode kind="report" id={output.id} /><h3 className="font-semibold text-ink">{output.title}</h3></div><StatusBadge status={output.review_status} /></div><textarea className="mt-4 min-h-96 w-full rounded-md border border-line px-3 py-3 font-mono text-sm leading-6" value={draft} onChange={(event) => setDraft(event.target.value)} /><input className="mt-3 w-full rounded-md border border-line px-3 py-2 text-sm" value={reason} onChange={(event) => setReason(event.target.value)} /><div className="mt-3 flex flex-wrap gap-2"><button className="button-primary" disabled={Boolean(busy)} onClick={() => submit("接受", output.content)}>接受初稿</button><button className="button-secondary" disabled={Boolean(busy)} onClick={() => submit("修改", draft)}>保存人工修改</button><button className="button-secondary" disabled={Boolean(busy)} onClick={() => submit("驳回")}>驳回</button></div></section>;
+}
+
+export function ReportPanel({ caseId, workspace, busy, request }: { caseId: number; workspace: CaseWorkspace; busy: string; request: Request }) {
+  const step = getWorkflowStepConfig("report");
+  if (workspace.case.workflow_mode !== "ai_case") {
+    const draft = workspace.ai_outputs.filter((output) => output.output_type === "draft").sort((a, b) => b.version - a.version)[0];
+    return <section className="space-y-5"><PanelHeading title={step.title} description={step.description} />{draft ? <LegacyDraft output={draft} busy={busy} request={request} /> : <EmptyState title="尚未生成文书" description="在法律分析步骤运行“文书生成”工作单元后显示初稿。" />}</section>;
+  }
+  const reports = workspace.ai_outputs.filter((output) => output.output_type === "legal_report").sort((a, b) => b.version - a.version);
+  const report = reports.find((output) => output.fact_version === workspace.case.fact_version && output.issue_version === workspace.case.issue_version);
+  const approved = workspace.ai_outputs.filter((output) => output.output_type === "legal_analysis" && output.fact_version === workspace.case.fact_version && output.issue_version === workspace.case.issue_version && ["已接受", "已修改"].includes(output.review_status)).length;
+  const ready = workspace.workflow_state?.report_ready ?? approved > 0;
+  return <section className="space-y-5"><PanelHeading title={step.title} description={step.description} action={<button className="button-primary" disabled={Boolean(busy) || !ready} onClick={() => request(`/cases/${caseId}/legal-analysis-report`)}><FileText size={16} />{report ? "重新生成报告" : "生成法律分析报告"}</button>} />{!ready && <div className="feedback-state border-amber-200 bg-amber-50 text-amber-800">至少完成一项当前版本法律分析并通过人工复核后，才能生成报告。</div>}{report ? <article className="reasoning-card"><div className="flex flex-wrap items-center justify-between gap-3"><div><div className="flex items-center gap-2"><EntityCode kind="report" id={report.id} /><h3 className="font-semibold text-ink">{report.title}</h3></div><p className="mt-2 text-xs text-slate-500">报告 V{report.version} · 事实 V{report.fact_version} · 争点 V{report.issue_version}</p></div><StatusBadge status={report.review_status || "已完成"} /></div><div className="mt-5 border-t border-line pt-5 whitespace-pre-wrap text-sm leading-8 text-slate-700">{report.reviewed_content || report.content}</div></article> : <EmptyState title="尚未生成法律分析报告" description="完成分析复核后，点击右上角按钮生成当前版本报告。" />}</section>;
+}

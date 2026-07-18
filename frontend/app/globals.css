@@ -3,21 +3,42 @@
 @tailwind utilities;
 
 :root {
-  background: #f5f7fa;
-  color: #172033;
+  --app-bg: #f4f7f9;
+  --surface: #ffffff;
+  --surface-subtle: #f8fafb;
+  --ink: #172033;
+  --muted: #607086;
+  --line: #d8e0e8;
+  --court: #1f587c;
+  --court-hover: #174560;
+  --mint: #267466;
+  background: var(--app-bg);
+  color: var(--ink);
 }
 
 body {
   margin: 0;
-  background: #f5f7fa;
+  background: var(--app-bg);
+  color: var(--ink);
+  font-feature-settings: "tnum" 1;
 }
 
-textarea, input {
+textarea, input, select {
   outline: none;
 }
 
+textarea:focus, input:focus, select:focus {
+  border-color: #78a6c2;
+  box-shadow: 0 0 0 3px rgb(31 88 124 / 9%);
+}
+
+button, a { -webkit-tap-highlight-color: transparent; }
+
+.bg-app { background: var(--app-bg); }
+
 .card {
-  @apply rounded-lg border border-line bg-white shadow-sm;
+  @apply rounded-lg border border-line bg-white;
+  box-shadow: 0 1px 2px rgb(23 32 51 / 4%);
 }
 
 .button {
@@ -25,7 +46,7 @@ textarea, input {
 }
 
 .button-primary {
-  @apply button bg-court text-white hover:bg-[#173f60];
+  @apply button bg-court text-white hover:bg-[#174560];
 }
 
 .button-secondary {
@@ -34,4 +55,54 @@ textarea, input {
 
 .badge {
   @apply rounded px-2 py-1 text-xs font-medium;
+}
+
+.top-navigation {
+  @apply sticky top-0 z-40 border-b border-line bg-white/95 backdrop-blur;
+}
+
+.top-nav-link {
+  @apply inline-flex shrink-0 items-center gap-2 rounded-md px-3 py-2 text-xs font-medium text-slate-600 transition hover:bg-slate-50 hover:text-ink sm:text-sm;
+}
+
+.top-nav-link-active {
+  @apply bg-[#eaf3f7] text-court;
+}
+
+.entity-code {
+  @apply inline-flex shrink-0 items-center rounded border border-[#bdd5e2] bg-[#eef5f8] px-2 py-1 text-xs font-semibold text-court;
+}
+
+.status-badge {
+  @apply inline-flex shrink-0 items-center rounded px-2 py-1 text-xs font-medium;
+}
+
+.status-ai { @apply bg-sky-50 text-sky-700; }
+.status-pending { @apply bg-amber-50 text-amber-800; }
+.status-confirmed { @apply bg-emerald-50 text-emerald-700; }
+.status-rerun { @apply bg-orange-50 text-orange-700; }
+.status-expired { @apply bg-slate-100 text-slate-500; }
+.status-failed { @apply bg-rose-50 text-rose-700; }
+.status-unavailable { @apply bg-slate-100 text-slate-500; }
+
+.page-heading {
+  @apply flex flex-wrap items-end justify-between gap-4 border-b border-line pb-5;
+}
+
+.page-heading h1 { @apply mt-1 text-2xl font-semibold text-ink; }
+.page-heading p { @apply mt-2 max-w-3xl text-sm leading-6 text-slate-600; }
+.page-eyebrow { @apply text-xs font-semibold text-court; }
+
+.feedback-state {
+  @apply flex min-h-16 items-center gap-3 rounded-md border border-line bg-white px-4 py-3 text-sm text-slate-600;
+}
+
+.empty-state {
+  @apply flex min-h-28 flex-col items-center justify-center gap-3 rounded-md border border-dashed border-line bg-slate-50 px-5 py-6 text-center text-slate-400;
+}
+
+.empty-state p { @apply mt-1 max-w-xl text-sm leading-6 text-slate-500; }
+
+.reasoning-card {
+  @apply rounded-lg border border-line bg-white p-4;
 }
