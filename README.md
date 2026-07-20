@@ -57,7 +57,7 @@ export ZHIPU_MODEL="glm-4-flash-250414"
 
 ## 技术栈
 
-- Backend: FastAPI + SQLite + SQLAlchemy
+- Backend: FastAPI + SQLAlchemy + Alembic；本地默认 SQLite，生产环境使用 PostgreSQL
 - Frontend: Next.js + React + Tailwind CSS
 - LLM: 已封装为可替换 agent，默认使用 mock 输出
 - Demo 数据: 内置劳动仲裁示例、`labor_law_rules.json`、`sample_memory.json`
@@ -76,6 +76,9 @@ backend/
       decision_trace.py
       legal_memory.py
       similarity_search.py
+    services/
+      storage.py
+      document_files.py
     mock/
       labor_law_rules.json
       sample_case.txt
@@ -99,10 +102,85 @@ cd backend
 python -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
+alembic -c alembic.ini upgrade head
 uvicorn app.main:app --reload --port 8000
 ```
 
-后端启动后会自动创建 SQLite 数据库并写入 Demo 案件与示例 Legal Memory。
+`alembic upgrade head` 会创建或升级数据库结构。当前唯一 migration head 为 `0003_demo_redactions`。本地 SQLite 启动阶段暂时保留 `create_all()` 和旧版动态补字段逻辑作为兼容桥梁；PostgreSQL 启动不会自动建表，必须在应用启动前完成 Alembic 迁移，避免 `create_all()` 与 0002 冲突。Sprint 1A 新增的 Document 字段与 `fact_sources`、0003 新增的脱敏版本表只由 Alembic 管理。完成两轮稳定生产迁移后将移除旧版动态迁移逻辑。
+
+### 文件存储
+
+本地开发默认使用 `LocalStorageService`，文件写入 `UPLOAD_DIR`。生产环境应把 `STORAGE_PROVIDER` 设为 `r2` 或 `s3`，并配置私有的 S3 兼容存储桶。业务上传逻辑只依赖统一 `StorageService`，不会直接依赖 Cloudflare R2 SDK。
+
+```bash
+# 本地
+STORAGE_PROVIDER=local
+UPLOAD_DIR=./app/uploads
+
+# Cloudflare R2 / S3 兼容存储
+STORAGE_PROVIDER=r2
+S3_ENDPOINT_URL=https://<account-id>.r2.cloudflarestorage.com
+S3_ACCESS_KEY_ID=<server-side-access-key>
+S3_SECRET_ACCESS_KEY=<server-side-secret>
+S3_BUCKET_NAME=lexflow-private
+S3_REGION=auto
+MAX_UPLOAD_SIZE_BYTES=20971520
+```
+
+存储桶必须保持私有。后端仅为下载生成最长 5 分钟的短期地址；密钥不得放入前端环境变量。当前仅接受扩展名、MIME 和文件签名相符的 PDF、DOCX、TXT 文件。对象键格式为 `cases/{case_id}/documents/{document_id}/{checksum}-{safe_filename}`，同名文件不会互相覆盖。
+
+旧版 `legacy_local` 材料不会自动迁移，也不会生成不存在的对象地址；页面仍保留其已解析文本并显示兼容提示。
+
+### 数据库迁移
+
+查看迁移历史和当前版本：
+
+```bash
+cd backend
+alembic -c alembic.ini history
+alembic -c alembic.ini current
+```
+
+全新数据库直接执行：
+
+```bash
+alembic -c alembic.ini upgrade head
+alembic -c alembic.ini current
+```
+
+当前代码预期 `current` 返回 `0003_demo_redactions (head)`。
+
+已有 MVP 1 SQLite 数据库必须先停止后端并备份：
+
+```bash
+cp data/lexflow.db "data/lexflow-before-mvp2-$(date +%Y%m%d-%H%M%S).db"
+```
+
+确认数据库中已经存在 `cases`、`documents`、`case_facts` 等旧表，并且尚未由 Alembic 管理后，执行：
+
+```bash
+alembic -c alembic.ini stamp 0001_baseline
+alembic -c alembic.ini upgrade head
+alembic -c alembic.ini current
+```
+
+`stamp` 只登记已有结构，不创建或修改现有表。不要对已有 MVP 1 数据库直接执行 `upgrade 0001_baseline`，否则会尝试重复创建表。
+
+只回滚 0003 脱敏迁移、保留 0002 的 Document 字段与 `fact_sources`：
+
+```bash
+alembic -c alembic.ini downgrade 0002_mvp2_documents_fact_sources
+```
+
+该操作会删除 `redaction_records`、`redaction_items` 及其中全部脱敏版本数据。只有在确认不需要保留这些数据，并且应用同步回滚到兼容 0002 的版本时才能执行。
+
+从当前 head 同时回滚 0003 和 0002、恢复到 MVP 1 baseline：
+
+```bash
+alembic -c alembic.ini downgrade 0001_baseline
+```
+
+该操作除删除脱敏表外，还会删除 `fact_sources` 和新增的 Document 字段。只有在确认不需要保留 Sprint 1A 与脱敏数据、已完成备份，并且应用同步回滚到只依赖 MVP 1 schema 的版本时才能执行。
 
 API 文档：
 
@@ -156,6 +234,9 @@ npm run dev
 - `POST /cases/{case_id}/follow-ups`
 - `POST /cases/{case_id}/documents/upload`
 - `GET /cases/{case_id}/documents`
+- `GET /documents/{document_id}/download-url`
+- `GET /documents/{document_id}/download`
+- `DELETE /cases/{case_id}/documents/{document_id}`
 - `POST /cases/{case_id}/workflow/run-evidence`
 - `POST /cases/{case_id}/workflow/run-analysis`
 - `POST /cases/{case_id}/workflow/run-draft`
