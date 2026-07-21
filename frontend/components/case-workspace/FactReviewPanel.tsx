@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { Check, Play, Save, X } from "lucide-react";
+import { Check, History, Play, Save, X } from "lucide-react";
 import type { AIOutput, CaseFact, CaseWorkspace, WorkUnit } from "@/lib/api";
 import { getWorkflowStepConfig } from "@/lib/workflow-config";
 import { EntityCode } from "@/components/ui/ReasoningUI";
@@ -14,7 +14,17 @@ function hasHumanRevision(fact: CaseFact) {
   return Boolean(fact.human_fact?.trim()) && fact.human_fact !== fact.ai_fact;
 }
 
-function FactCard({ fact, busy, onReview, onEdit }: { fact: CaseFact; busy: boolean; onReview: (fact: CaseFact, action: string, humanFact?: string, reason?: string) => void; onEdit: (fact: CaseFact) => void }) {
+function FactCard({
+  fact,
+  busy,
+  onReview,
+  onEdit,
+}: {
+  fact: CaseFact;
+  busy: boolean;
+  onReview: (fact: CaseFact, action: string, humanFact?: string, reason?: string) => void;
+  onEdit: (fact: CaseFact) => void;
+}) {
   const revised = hasHumanRevision(fact);
   return (
     <article className="workspace-card">
@@ -25,6 +35,7 @@ function FactCard({ fact, busy, onReview, onEdit }: { fact: CaseFact; busy: bool
         </div>
         <StatusBadge status={fact.status} />
       </div>
+
       {revised ? (
         <div className="mt-3 space-y-2">
           <div>
@@ -39,19 +50,61 @@ function FactCard({ fact, busy, onReview, onEdit }: { fact: CaseFact; busy: bool
       ) : (
         <p className="mt-3 text-sm leading-7 text-slate-700">{fact.human_fact || fact.ai_fact}</p>
       )}
+
       <div className="mt-3 flex flex-wrap items-center gap-2 text-xs leading-5 text-slate-500">
         <SourceTag>来源：{fact.source_document || "案件输入"}</SourceTag>
         <span>置信度：{fact.confidence || "未标注"}</span>
         <VersionChip label="事实" value={`V${fact.fact_version}`} />
       </div>
+
       {fact.status === "待确认" && (
         <div className="mt-4 flex flex-wrap gap-2">
-          <button className="button-primary" disabled={busy} onClick={() => onReview(fact, "接受", fact.ai_fact, "人工核验后接受 AI 提取事实。")}><Check size={15} />确认</button>
+          <button className="button-primary" disabled={busy} onClick={() => onReview(fact, "接受", fact.ai_fact, "人工核验后接受 AI 提取事实。")}>
+            <Check size={15} />确认
+          </button>
           <button className="button-secondary" disabled={busy} onClick={() => onEdit(fact)}>修改</button>
           <button className="button-secondary" disabled={busy} onClick={() => onReview(fact, "驳回", "", "现有材料不足以支持该事实。")}>驳回</button>
         </div>
       )}
     </article>
+  );
+}
+
+function FactExtractionHistory({ outputs }: { outputs: AIOutput[] }) {
+  const [open, setOpen] = useState(false);
+  const [activeVersion, setActiveVersion] = useState<number | null>(null);
+  if (outputs.length <= 1) return null;
+  const active = outputs.find((item) => item.version === activeVersion) || outputs[0];
+  return (
+    <div className="rounded-md border border-line bg-white">
+      <button type="button" className="flex w-full items-center justify-between gap-2 px-4 py-3 text-left" onClick={() => setOpen((value) => !value)}>
+        <span className="flex items-center gap-2 text-sm font-medium text-ink">
+          <History size={15} className="text-slate-400" />
+          事实提取版本谱系
+        </span>
+        <span className="text-xs text-slate-500">{outputs.length} 个版本 · 当前 V{outputs[0].version}</span>
+      </button>
+      {open && (
+        <div className="border-t border-line-subtle px-4 py-4">
+          <div className="flex flex-wrap gap-2">
+            {outputs.map((item) => (
+              <button
+                key={item.id}
+                type="button"
+                onClick={() => setActiveVersion(item.version)}
+                className={`version-chip ${item.version === active.version ? "version-chip-court" : ""}`}
+              >
+                <span className="text-slate-400">V</span>
+                <span className="font-semibold">{item.version}</span>
+                {item.review_status && <span className="ml-1 text-[10px] text-slate-400">{item.review_status}</span>}
+              </button>
+            ))}
+          </div>
+          <pre className="ai-surface mt-3 max-h-64 overflow-auto whitespace-pre-wrap text-sm leading-6 text-slate-700">{active.reviewed_content || active.content}</pre>
+          <p className="mt-2 text-xs text-slate-500">生成于 {new Date(active.created_at).toLocaleString("zh-CN")} · 执行方式 {active.execution_mode === "llm" ? "大模型" : active.execution_mode === "fallback" ? "备用模式" : "未标注"}</p>
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -61,7 +114,8 @@ export function FactReviewPanel({ caseId, workspace, busy, request }: { caseId: 
   const [revision, setRevision] = useState("");
   const [reason, setReason] = useState("根据原始材料修订事实表述。");
   const factUnit = workspace.work_units.find((unit) => unit.code === "fact_extraction") as WorkUnit | undefined;
-  const latestOutput = workspace.ai_outputs.filter((output) => output.output_type === "fact_extraction").sort((a, b) => b.version - a.version)[0] as AIOutput | undefined;
+  const factOutputs = workspace.ai_outputs.filter((output) => output.output_type === "fact_extraction").sort((a, b) => b.version - a.version);
+  const latestOutput = factOutputs[0] as AIOutput | undefined;
   const pending = workspace.facts.filter((fact) => fact.status === "待确认");
   const confirmed = workspace.facts.filter((fact) => fact.status === "已确认");
   const rejected = workspace.facts.filter((fact) => fact.status === "已驳回");
@@ -70,17 +124,44 @@ export function FactReviewPanel({ caseId, workspace, busy, request }: { caseId: 
   const openEdit = (fact: CaseFact) => { setEditing(fact); setRevision(fact.human_fact || fact.ai_fact); setReason("根据原始材料修订事实表述。"); };
 
   const orderedFacts = [...pending, ...confirmed, ...rejected];
+
   return (
     <section className="space-y-5">
-      <PanelHeading title={step.title} description={step.description} action={<div className="flex flex-wrap gap-2">{factUnit && <button className="button-secondary" disabled={Boolean(busy)} onClick={() => request(`/cases/${caseId}/work-units/${factUnit.id}/run`)}><Play size={16} />{factUnit.status === "失败" ? "重新运行" : "运行事实提取"}</button>}<button className="button-primary" disabled={Boolean(busy) || !pending.length} onClick={() => request(`/cases/${caseId}/facts/confirm-all`, "POST", { reason: "人工复核 AI 提取事实后批量确认，后续按需逐项修订。" })}><Check size={16} />一键确认 AI 事实</button></div>} />
-      <div className="flex flex-wrap gap-2 text-sm"><span className="status-badge status-pending">待人工确认 {pending.length}</span><span className="status-badge status-confirmed">已人工确认 {confirmed.length}</span><span className="status-badge status-expired">已驳回 {rejected.length}</span></div>
-      {latestOutput && (
-        <details className="workspace-card">
-          <summary className="cursor-pointer text-sm font-medium text-ink">查看 AI 事实提取摘要 · 版本 {latestOutput.version}</summary>
-          <pre className="ai-surface mt-3 max-h-72 overflow-auto whitespace-pre-wrap text-sm leading-6 text-slate-700">{latestOutput.reviewed_content || latestOutput.content}</pre>
-        </details>
+      <PanelHeading
+        title={step.title}
+        description={step.description}
+        action={
+          <div className="flex flex-wrap gap-2">
+            {factUnit && (
+              <button className="button-secondary" disabled={Boolean(busy)} onClick={() => request(`/cases/${caseId}/work-units/${factUnit.id}/run`)}>
+                <Play size={16} />{factUnit.status === "失败" ? "重新运行" : "运行事实提取"}
+              </button>
+            )}
+            <button
+              className="button-primary"
+              disabled={Boolean(busy) || !pending.length}
+              onClick={() => request(`/cases/${caseId}/facts/confirm-all`, "POST", { reason: "人工复核 AI 提取事实后批量确认，后续按需逐项修订。" })}
+            >
+              <Check size={16} />一键确认 AI 事实
+            </button>
+          </div>
+        }
+      />
+
+      <div className="flex flex-wrap gap-2 text-sm">
+        <span className="status-badge status-pending">待人工确认 {pending.length}</span>
+        <span className="status-badge status-confirmed">已人工确认 {confirmed.length}</span>
+        <span className="status-badge status-expired">已驳回 {rejected.length}</span>
+      </div>
+
+      {latestOutput && <FactExtractionHistory outputs={factOutputs} />}
+
+      {!workspace.facts.length ? (
+        <EmptyState title="尚未生成事实" description="点击“运行事实提取”，系统将继续使用当前后端 AI 流程生成结构化事实。" />
+      ) : (
+        <div className="space-y-3">{orderedFacts.map((fact) => <FactCard key={fact.id} fact={fact} busy={Boolean(busy)} onReview={review} onEdit={openEdit} />)}</div>
       )}
-      {!workspace.facts.length ? <EmptyState title="尚未生成事实" description="点击“运行事实提取”，系统将继续使用当前后端 AI 流程生成结构化事实。" /> : <div className="space-y-3">{orderedFacts.map((fact) => <FactCard key={fact.id} fact={fact} busy={Boolean(busy)} onReview={review} onEdit={openEdit} />)}</div>}
+
       {editing && (
         <section className="workspace-card">
           <div className="flex items-center justify-between">
@@ -89,7 +170,9 @@ export function FactReviewPanel({ caseId, workspace, busy, request }: { caseId: 
           </div>
           <textarea className="mt-4 min-h-28 w-full rounded-md border border-line px-3 py-2 text-sm leading-6 focus:border-court" value={revision} onChange={(event) => setRevision(event.target.value)} />
           <input className="mt-3 w-full rounded-md border border-line px-3 py-2 text-sm focus:border-court" value={reason} onChange={(event) => setReason(event.target.value)} placeholder="填写修改原因" />
-          <button className="button-primary mt-3" onClick={() => void review(editing, "修改", revision, reason).then((ok) => ok && setEditing(null))}><Save size={16} />保存人工版本</button>
+          <button className="button-primary mt-3" onClick={() => void review(editing, "修改", revision, reason).then((ok) => ok && setEditing(null))}>
+            <Save size={16} />保存人工版本
+          </button>
         </section>
       )}
     </section>

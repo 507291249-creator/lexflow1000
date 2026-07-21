@@ -12,7 +12,7 @@ export function CaseOverviewPanel({ workspace, onNext }: { workspace: CaseWorksp
     <section className="workspace-card space-y-5">
       <SectionHeader title="案件概况" description="本页集中展示案件输入和当前处理进度，原始内容不会因后续 AI 运行而被覆盖。" />
       <div className="grid gap-5 lg:grid-cols-[1.25fr_0.75fr]">
-        <div>
+        <div className="min-w-0">
           <div className="text-xs font-medium text-slate-500">案件摘要</div>
           <p className="mt-2 whitespace-pre-wrap text-sm leading-7 text-slate-700">{workspace.case.summary || workspace.case.raw_facts || "尚未补充案件摘要。"}</p>
           {workspace.case.raw_facts && workspace.case.summary && (
@@ -29,7 +29,9 @@ export function CaseOverviewPanel({ workspace, onNext }: { workspace: CaseWorksp
             <Metric label="争点" value={workspace.issues.length} />
             <Metric label="决策记录" value={workspace.traces.length} />
           </div>
-          <button className="button-primary mt-4 w-full" type="button" onClick={() => onNext(nextStep.code)}>进入{nextStep.title}<ChevronRight size={16} /></button>
+          <button className="button-primary mt-4 w-full" type="button" onClick={() => onNext(nextStep.code)}>
+            进入{nextStep.title}<ChevronRight size={16} />
+          </button>
         </div>
       </div>
     </section>
@@ -37,5 +39,10 @@ export function CaseOverviewPanel({ workspace, onNext }: { workspace: CaseWorksp
 }
 
 function Metric({ label, value }: { label: string; value: string | number }) {
-  return <div className="rounded-md border border-line bg-white p-3"><div className="text-xs text-slate-500">{label}</div><div className="mt-1 text-xl font-semibold text-ink">{value}</div></div>;
+  return (
+    <div className="rounded-md border border-line bg-white p-3">
+      <div className="text-xs text-slate-500">{label}</div>
+      <div className="mt-1 text-xl font-semibold text-ink">{value}</div>
+    </div>
+  );
 }

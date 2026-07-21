@@ -43,9 +43,35 @@ export function IssueReviewPanel({ caseId, workspace, busy, request }: { caseId:
 
   return (
     <section className="space-y-5">
-      <PanelHeading title={step.title} description={step.description} action={<div className="flex flex-wrap gap-2">{issueUnit && <button className="button-secondary" disabled={Boolean(busy) || !factsConfirmed} onClick={() => request(runPath)}><Play size={16} />{workspace.issues.length ? "重新生成争点" : "生成 AI 争点"}</button>}<button className="button-primary" disabled={Boolean(busy) || !pending.length} onClick={() => request(`/cases/${caseId}/issues/confirm-all`, "POST", { reason: "人工复核 AI 争点建议后批量确认，后续按需逐项修订。" })}><Check size={16} />一键确认 AI 争点</button><button className="button-secondary" disabled={Boolean(busy)} onClick={() => setEditing(newDraft())}><Plus size={16} />新增争点</button></div>} />
-      {!factsConfirmed && <div className="feedback-state border-[var(--warning)] bg-[var(--warning-bg)] text-[var(--warning)]">请先完成事实确认，再运行争点识别。</div>}
-      {!workspace.issues.length ? <EmptyState title="尚未识别争点" description="完成事实确认后，点击“生成 AI 争点”。" /> : (
+      <PanelHeading
+        title={step.title}
+        description={step.description}
+        action={
+          <div className="flex flex-wrap gap-2">
+            {issueUnit && (
+              <button className="button-secondary" disabled={Boolean(busy) || !factsConfirmed} onClick={() => request(runPath)}>
+                <Play size={16} />{workspace.issues.length ? "重新生成争点" : "生成 AI 争点"}
+              </button>
+            )}
+            <button
+              className="button-primary"
+              disabled={Boolean(busy) || !pending.length}
+              onClick={() => request(`/cases/${caseId}/issues/confirm-all`, "POST", { reason: "人工复核 AI 争点建议后批量确认，后续按需逐项修订。" })}
+            >
+              <Check size={16} />一键确认 AI 争点
+            </button>
+            <button className="button-secondary" disabled={Boolean(busy)} onClick={() => setEditing(newDraft())}>
+              <Plus size={16} />新增争点
+            </button>
+          </div>
+        }
+      />
+
+      {!factsConfirmed && <div className="feedback-state border-[var(--warning-border)] bg-[var(--warning-bg)] text-[var(--warning)]">请先完成事实确认，再运行争点识别。</div>}
+
+      {!workspace.issues.length ? (
+        <EmptyState title="尚未识别争点" description="完成事实确认后，点击“生成 AI 争点”。" />
+      ) : (
         <div className="space-y-3">
           {workspace.issues.map((issue) => {
             const facts = relatedFacts(issue, workspace);
@@ -62,20 +88,39 @@ export function IssueReviewPanel({ caseId, workspace, busy, request }: { caseId:
                     </div>
                     <p className="mt-3 text-sm leading-7 text-slate-600">{issue.description}</p>
                     {issue.analysis_hint && <p className="mt-2 text-sm text-[var(--court)]">分析提示：{issue.analysis_hint}</p>}
+
                     <div className="mt-4">
                       <div className="text-xs font-medium text-slate-500">关联事实</div>
                       {facts.length ? (
                         <div className="mt-2 space-y-2">
-                          {facts.map((fact) => <div key={fact.id} className="rounded-md border border-line bg-[var(--surface-subtle)] px-3 py-2 text-xs leading-5 text-slate-600"><EntityCode kind="fact" id={fact.id} className="mr-2" />{fact.human_fact || fact.ai_fact}</div>)}
+                          {facts.map((fact) => (
+                            <div key={fact.id} className="rounded-md border border-line bg-[var(--surface-subtle)] px-3 py-2 text-xs leading-5 text-slate-600">
+                              <EntityCode kind="fact" id={fact.id} className="mr-2" />{fact.human_fact || fact.ai_fact}
+                            </div>
+                          ))}
                         </div>
-                      ) : <p className="mt-2 text-xs text-slate-400">{issue.related_facts?.join("、") || "未关联事实"}</p>}
+                      ) : (
+                        <p className="mt-2 text-xs text-slate-400">{issue.related_facts?.join("、") || "未关联事实"}</p>
+                      )}
                     </div>
+
                     {issue.source && <div className="mt-3"><SourceTag>来源：{issue.source}</SourceTag></div>}
                   </div>
-                  <div className="flex gap-2">
-                    {pending.some((item) => item.id === issue.id) && <button className="button-primary" disabled={Boolean(busy)} onClick={() => request(`/issues/${issue.id}/action`, "POST", { action: "确认", reason: "人工确认该争点可进入分析。" })}><Check size={16} />确认</button>}
+                  <div className="flex flex-col gap-2">
+                    {pending.some((item) => item.id === issue.id) && (
+                      <button className="button-primary" disabled={Boolean(busy)} onClick={() => request(`/issues/${issue.id}/action`, "POST", { action: "确认", reason: "人工确认该争点可进入分析。" })}>
+                        <Check size={16} />确认
+                      </button>
+                    )}
                     <button className="button-secondary" disabled={Boolean(busy)} onClick={() => setEditing(issue)}>修改</button>
-                    <button className="button-secondary" title="删除" disabled={Boolean(busy)} onClick={() => window.confirm(`确认删除争点“${issue.title}”吗？`) && request(`/issues/${issue.id}`, "DELETE", { action: "删除", reason: "人工判断该争点不再适用。" })}><Trash2 size={16} /></button>
+                    <button
+                      className="button-secondary text-[var(--danger)]"
+                      title="删除"
+                      disabled={Boolean(busy)}
+                      onClick={() => window.confirm(`确认删除争点“${issue.title}”吗？`) && request(`/issues/${issue.id}`, "DELETE", { action: "删除", reason: "人工判断该争点不再适用。" })}
+                    >
+                      <Trash2 size={16} />
+                    </button>
                   </div>
                 </div>
               </article>
@@ -83,19 +128,27 @@ export function IssueReviewPanel({ caseId, workspace, busy, request }: { caseId:
           })}
         </div>
       )}
+
       {editing && (
         <section className="workspace-card">
           <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">{editing.id > 0 && <EntityCode kind="issue" id={editing.id} />}<h3 className="font-semibold text-ink">{editing.id ? "修改争点" : "新增争点"}</h3></div>
+            <div className="flex items-center gap-2">
+              {editing.id > 0 && <EntityCode kind="issue" id={editing.id} />}
+              <h3 className="font-semibold text-ink">{editing.id ? "修改争点" : "新增争点"}</h3>
+            </div>
             <button title="关闭" onClick={() => setEditing(null)}><X size={18} /></button>
           </div>
           <div className="mt-4 space-y-3">
             <input className="w-full rounded-md border border-line px-3 py-2 text-sm focus:border-court" value={editing.title} onChange={(event) => setEditing({ ...editing, title: event.target.value })} placeholder="争点标题" />
             <textarea className="min-h-24 w-full rounded-md border border-line px-3 py-2 text-sm focus:border-court" value={editing.description} onChange={(event) => setEditing({ ...editing, description: event.target.value })} placeholder="争点描述" />
             <input className="w-full rounded-md border border-line px-3 py-2 text-sm focus:border-court" value={editing.analysis_hint} onChange={(event) => setEditing({ ...editing, analysis_hint: event.target.value })} placeholder="分析提示" />
-            <select className="w-full rounded-md border border-line bg-white px-3 py-2 text-sm focus:border-court" value={editing.importance} onChange={(event) => setEditing({ ...editing, importance: event.target.value })}>{["高", "中", "低"].map((item) => <option key={item}>{item}</option>)}</select>
+            <select className="w-full rounded-md border border-line bg-white px-3 py-2 text-sm focus:border-court" value={editing.importance} onChange={(event) => setEditing({ ...editing, importance: event.target.value })}>
+              {["高", "中", "低"].map((item) => <option key={item}>{item}</option>)}
+            </select>
             <input className="w-full rounded-md border border-line px-3 py-2 text-sm focus:border-court" value={reason} onChange={(event) => setReason(event.target.value)} placeholder="修改原因" />
-            <button className="button-primary" disabled={!editing.title.trim()} onClick={() => void save()}><Save size={16} />保存争点</button>
+            <button className="button-primary" disabled={!editing.title.trim()} onClick={() => void save()}>
+              <Save size={16} />保存争点
+            </button>
           </div>
         </section>
       )}
