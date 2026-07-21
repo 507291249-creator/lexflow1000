@@ -61,12 +61,12 @@ export default function NewAICasePage() {
       {step === 1 ? (
         <section className="space-y-5">
           <div className="grid gap-3 md:grid-cols-3">
-            {inputModes.map((item) => { const Icon = item.icon; const active = mode === item.code; return <button type="button" key={item.code} onClick={() => { setMode(item.code); setError(""); }} className={`reasoning-card min-h-36 text-left transition ${active ? "border-court bg-[#f1f7fa]" : "hover:border-[#9cb9ca]"}`}><Icon size={20} className={active ? "text-court" : "text-slate-400"} /><h2 className="mt-4 font-semibold text-ink">{item.title}</h2><p className="mt-2 text-sm leading-6 text-slate-500">{item.description}</p></button>; })}
+            {inputModes.map((item) => { const Icon = item.icon; const active = mode === item.code; return <button type="button" key={item.code} onClick={() => { setMode(item.code); setError(""); }} className={`reasoning-card min-h-36 text-left transition ${active ? "border-court bg-primary-100" : "hover:border-court"}`}><Icon size={20} className={active ? "text-court" : "text-slate-400"} /><h2 className="mt-4 font-semibold text-ink">{item.title}</h2><p className="mt-2 text-sm leading-6 text-slate-500">{item.description}</p></button>; })}
           </div>
-          {mode === "paste" && <textarea className="min-h-64 w-full rounded-md border border-line bg-white px-4 py-3 text-sm leading-7" value={form.fact_text} onChange={(event) => setForm({ ...form, fact_text: event.target.value })} placeholder="粘贴案件事实、时间节点、诉求和已知证据。原文将作为后续事实提取输入。" />}
-          {mode === "upload" && <label className="flex min-h-64 cursor-pointer flex-col items-center justify-center rounded-lg border border-dashed border-line bg-white p-6 text-center hover:border-court"><Files size={24} className="text-court" /><span className="mt-3 font-medium text-ink">选择案件材料</span><span className="mt-2 text-sm text-slate-500">支持 PDF、DOCX、TXT</span><input className="hidden" type="file" accept=".pdf,.docx,.txt" multiple onChange={pickFiles} />{files.length > 0 && <div className="mt-5 flex flex-wrap justify-center gap-2">{files.map((file) => <span className="badge bg-slate-100 text-slate-600" key={`${file.name}-${file.lastModified}`}>{file.name}</span>)}</div>}</label>}
+          {mode === "paste" && <textarea className="min-h-64 w-full rounded-md border border-line bg-white px-4 py-3 text-sm leading-7 focus:border-court" value={form.fact_text} onChange={(event) => setForm({ ...form, fact_text: event.target.value })} placeholder="粘贴案件事实、时间节点、诉求和已知证据。原文将作为后续事实提取输入。" />}
+          {mode === "upload" && <label className="flex min-h-64 cursor-pointer flex-col items-center justify-center rounded-lg border border-dashed border-line bg-white p-6 text-center hover:border-court"><Files size={24} className="text-court" /><span className="mt-3 font-medium text-ink">选择案件材料</span><span className="mt-2 text-sm text-slate-500">支持 PDF、DOCX、TXT</span><input className="hidden" type="file" accept=".pdf,.docx,.txt" multiple onChange={pickFiles} />{files.length > 0 && <div className="mt-5 flex flex-wrap justify-center gap-2">{files.map((file) => <span className="badge bg-primary-100 text-court" key={`${file.name}-${file.lastModified}`}>{file.name}</span>)}</div>}</label>}
           {mode === "blank" && <div className="empty-state min-h-64"><FilePlus2 size={24} /><div><div className="font-medium text-ink">建立空白推理工作区</div><p>创建后可在“材料与脱敏”步骤上传文件，或通过案件信息抽屉补充基础资料。</p></div></div>}
-          {error && <div className="border-l-2 border-amber-500 bg-amber-50 px-4 py-3 text-sm text-amber-800">{error}</div>}
+          {error && <div className="rounded-md border-l-2 border-[var(--warning)] bg-[var(--warning-bg)] px-4 py-3 text-sm text-[var(--warning)]">{error}</div>}
           <div className="flex justify-end"><button className="button-primary" type="button" onClick={continueToInfo}>继续补充信息<ArrowRight size={16} /></button></div>
         </section>
       ) : (
@@ -74,13 +74,13 @@ export default function NewAICasePage() {
           <section className="card p-5 sm:p-6">
             <div className="grid gap-4 sm:grid-cols-2">
               <Field label="案件名称" value={form.title} required onChange={(value) => setForm({ ...form, title: value })} placeholder="例如：李某与某公司劳动争议" />
-              <label className="block"><span className="text-xs font-medium text-slate-600">案件类型</span><select className="mt-1 w-full rounded-md border border-line bg-white px-3 py-2 text-sm" value={form.case_type} onChange={(event) => setForm({ ...form, case_type: event.target.value })}>{["合同纠纷", "公司纠纷", "知识产权", "劳动争议", "其他"].map((item) => <option key={item}>{item}</option>)}</select></label>
+              <label className="block"><span className="text-xs font-medium text-slate-600">案件类型</span><select className="mt-1 w-full rounded-md border border-line bg-white px-3 py-2 text-sm focus:border-court" value={form.case_type} onChange={(event) => setForm({ ...form, case_type: event.target.value })}>{["合同纠纷", "公司纠纷", "知识产权", "劳动争议", "其他"].map((item) => <option key={item}>{item}</option>)}</select></label>
               <Field label="申请人" value={form.claimant} onChange={(value) => setForm({ ...form, claimant: value })} placeholder="可留空，由材料识别" />
               <Field label="被申请人" value={form.employer} onChange={(value) => setForm({ ...form, employer: value })} placeholder="可留空，由材料识别" />
             </div>
-            <div className="mt-5 rounded-md bg-slate-50 px-4 py-3 text-sm text-slate-600">推理起点：{inputModes.find((item) => item.code === mode)?.title}{mode === "upload" ? ` · ${files.length} 份材料` : ""}</div>
+            <div className="mt-5 rounded-md bg-[var(--surface-subtle)] px-4 py-3 text-sm text-slate-600">推理起点：{inputModes.find((item) => item.code === mode)?.title}{mode === "upload" ? ` · ${files.length} 份材料` : ""}</div>
           </section>
-          {error && <div className="border-l-2 border-amber-500 bg-amber-50 px-4 py-3 text-sm text-amber-800">{error}</div>}
+          {error && <div className="rounded-md border-l-2 border-[var(--warning)] bg-[var(--warning-bg)] px-4 py-3 text-sm text-[var(--warning)]">{error}</div>}
           <div className="flex flex-wrap justify-between gap-3"><button className="button-secondary" type="button" onClick={() => setStep(1)}><ArrowLeft size={16} />返回材料</button><button className="button-primary" disabled={busy} type="submit"><Scale size={16} />{busy ? "正在建立工作区" : mode === "blank" ? "创建空白案件" : "创建并开始事实提取"}</button></div>
         </form>
       )}
@@ -88,5 +88,5 @@ export default function NewAICasePage() {
   );
 }
 
-function StepIndicator({ active, done, label }: { active: boolean; done: boolean; label: string }) { return <div className={`flex items-center gap-2 rounded-md border px-3 py-2 text-sm ${active ? "border-court bg-[#edf5fa] text-court" : "border-line bg-white text-slate-500"}`}>{done ? <Check size={15} /> : <span className="h-2 w-2 rounded-full bg-current" />}{label}</div>; }
-function Field({ label, value, onChange, placeholder, required = false }: { label: string; value: string; onChange: (value: string) => void; placeholder: string; required?: boolean }) { return <label className="block"><span className="text-xs font-medium text-slate-600">{label}</span><input required={required} className="mt-1 w-full rounded-md border border-line px-3 py-2 text-sm" value={value} onChange={(event) => onChange(event.target.value)} placeholder={placeholder} /></label>; }
+function StepIndicator({ active, done, label }: { active: boolean; done: boolean; label: string }) { return <div className={`flex items-center gap-2 rounded-md border px-3 py-2 text-sm ${active ? "border-court bg-primary-100 text-court" : "border-line bg-white text-slate-500"}`}>{done ? <Check size={15} /> : <span className="h-2 w-2 rounded-full bg-current" />}{label}</div>; }
+function Field({ label, value, onChange, placeholder, required = false }: { label: string; value: string; onChange: (value: string) => void; placeholder: string; required?: boolean }) { return <label className="block"><span className="text-xs font-medium text-slate-600">{label}</span><input required={required} className="mt-1 w-full rounded-md border border-line px-3 py-2 text-sm focus:border-court" value={value} onChange={(event) => onChange(event.target.value)} placeholder={placeholder} /></label>; }

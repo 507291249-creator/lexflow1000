@@ -5,8 +5,8 @@ import { usePathname } from "next/navigation";
 import { BookOpenCheck, BriefcaseBusiness, LayoutGrid, Scale } from "lucide-react";
 
 const nav = [
-  { href: "/", label: "推理首页", icon: LayoutGrid, match: (path: string) => path === "/" },
-  { href: "/cases", label: "案件分析", icon: BriefcaseBusiness, match: (path: string) => path.startsWith("/cases") },
+  { href: "/", label: "工作台", icon: LayoutGrid, match: (path: string) => path === "/" },
+  { href: "/cases", label: "案件工作区", icon: BriefcaseBusiness, match: (path: string) => path.startsWith("/cases") },
   { href: "/research", label: "法律研究", icon: Scale, match: (path: string) => path.startsWith("/research") },
   { href: "/memory", label: "法律记忆", icon: BookOpenCheck, match: (path: string) => path.startsWith("/memory") },
 ];
@@ -15,9 +15,9 @@ export function TopNavigation() {
   const pathname = usePathname();
   return (
     <header className="top-navigation">
-      <div className="mx-auto flex max-w-[1920px] items-center gap-4 px-4 sm:px-6">
+      <div className="mx-auto flex max-w-[1920px] items-center gap-4 px-4 sm:px-6 h-16">
         <Link href="/" className="flex min-w-0 items-center gap-3 py-3">
-          <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-court text-sm font-bold text-white">LF</span>
+          <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-[var(--primary-100)] text-[var(--court)] text-sm font-semibold">LF</span>
           <span className="min-w-0">
             <span className="block truncate text-sm font-semibold text-ink">LexFlow</span>
             <span className="hidden text-xs text-slate-500 lg:block">法律 AI 推理工作台</span>

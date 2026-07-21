@@ -63,25 +63,25 @@ export default function CasesPage() {
       {loading && <LoadingState label="正在读取案件推理进度" />}
       {error && <ErrorState message={error} onRetry={() => void load()} />}
       {!loading && !error && !filtered.length && <div className="empty-state"><div><div className="font-medium text-ink">没有匹配的案件</div><p>创建一个新的法律分析，或调整搜索条件。</p></div></div>}
-      <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+      <section className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
         {filtered.map((item) => {
           const snapshot = snapshots[item.id];
           return (
-            <Link href={`/cases/${item.id}`} key={item.id} className="group reasoning-card flex min-h-64 flex-col transition hover:border-[#8fb3c8] hover:shadow-sm">
-              <div className="flex items-start justify-between gap-3">
+            <Link href={`/cases/${item.id}`} key={item.id} className="group card-compact flex min-h-56 flex-col justify-between px-4 transition hover:border-[var(--court)]">
+              <div className="flex items-start justify-between gap-2">
                 <EntityCode kind="case" id={item.id} />
                 <ReasoningStatusBadge status={snapshot?.status || "ai_generated"} label={snapshot ? undefined : "读取中"} />
               </div>
-              <h2 className="mt-4 text-base font-semibold leading-6 text-ink">{item.title}</h2>
-              <p className="mt-2 line-clamp-2 text-sm leading-6 text-slate-600">{item.summary || item.raw_facts || "尚未形成案件摘要。"}</p>
-              <div className="mt-4 grid grid-cols-3 gap-2 border-y border-line py-3 text-center">
-                <Metric label="当前阶段" value={snapshot?.stage || "读取中"} />
+              <h2 className="mt-3 text-sm font-semibold leading-6 text-ink truncate">{item.title}</h2>
+              <p className="mt-1 line-clamp-2 text-xs leading-5 text-slate-600">{item.summary || item.raw_facts || "尚未形成案件摘要。"}</p>
+              <div className="mt-3 grid grid-cols-3 gap-2 border-y border-line py-2 text-center">
+                <Metric label="阶段" value={snapshot?.stage || "读取中"} />
                 <Metric label="待处理" value={String(snapshot?.pending ?? "-")} />
                 <Metric label="版本" value={`F${item.fact_version} / I${item.issue_version}`} />
               </div>
-              <div className="mt-auto flex items-end justify-between gap-3 pt-4">
-                <div className="min-w-0"><div className="flex items-center gap-1 text-[11px] text-slate-400"><Clock3 size={12} />最近 AI 动作</div><div className="mt-1 truncate text-xs text-slate-600">{snapshot?.latestAction || "正在读取"}</div></div>
-                <ArrowRight size={17} className="shrink-0 text-slate-400 transition group-hover:translate-x-0.5 group-hover:text-court" />
+              <div className="mt-auto flex items-end justify-between gap-2 pt-3">
+                <div className="min-w-0"><div className="flex items-center gap-1 text-[11px] text-slate-400"><Clock3 size={12} />最近 AI 动作</div><div className="mt-0.5 truncate text-xs text-slate-600">{snapshot?.latestAction || "正在读取"}</div></div>
+                <ArrowRight size={14} className="shrink-0 text-slate-400 transition group-hover:translate-x-0.5 group-hover:text-court" />
               </div>
             </Link>
           );
@@ -92,5 +92,5 @@ export default function CasesPage() {
 }
 
 function Metric({ label, value }: { label: string; value: string }) {
-  return <div className="min-w-0"><div className="text-[11px] text-slate-400">{label}</div><div className="mt-1 truncate text-xs font-semibold text-ink">{value}</div></div>;
+  return <div className="min-w-0"><div className="text-[11px] text-slate-400">{label}</div><div className="mt-0.5 truncate text-xs font-semibold text-ink">{value}</div></div>;
 }

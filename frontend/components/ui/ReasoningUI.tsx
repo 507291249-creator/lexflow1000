@@ -38,7 +38,7 @@ export function LoadingState({ label = "正在读取推理数据" }: { label?: s
 }
 
 export function ErrorState({ message, onRetry }: { message: string; onRetry?: () => void }) {
-  return <div className="feedback-state border-rose-200 bg-rose-50 text-rose-800"><AlertCircle size={18} /><span className="flex-1">{message}</span>{onRetry && <button className="button-secondary" onClick={onRetry}>重新加载</button>}</div>;
+  return <div className="feedback-state border-[var(--danger)] bg-[var(--danger-bg)] text-[var(--danger)]"><AlertCircle size={18} /><span className="flex-1">{message}</span>{onRetry && <button className="button-secondary" onClick={onRetry}>重新加载</button>}</div>;
 }
 
 export function EmptyReasoningState({ title, description, action }: { title: string; description: string; action?: ReactNode }) {
