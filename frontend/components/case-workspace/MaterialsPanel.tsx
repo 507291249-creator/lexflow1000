@@ -6,6 +6,7 @@ import type { CaseFact, DocumentItem } from "@/lib/api";
 import { EntityCode, ReasoningStatusBadge } from "@/components/ui/ReasoningUI";
 import { RedactionWorkspace } from "./RedactionWorkspace";
 import { EmptyState, PanelHeading, StatusBadge } from "./shared";
+import { WorkspaceCard } from "./primitives";
 
 function formatFileSize(size: number | null) {
   if (!size) return "未知大小";
@@ -67,9 +68,9 @@ export function MaterialsPanel({
             const citations = facts.filter((fact) => fact.source_document === sourceName || fact.source_document === item.filename).length;
             const status = documentStatusLabel[item.processing_status] || (item.raw_text ? "已完成" : "待处理");
             return (
-              <article key={item.id} className="reasoning-card">
+              <article key={item.id} className="workspace-card">
                 <div className="flex flex-wrap items-start gap-3">
-                  <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md bg-slate-100 text-court"><FileText size={19} /></span>
+                  <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md bg-[var(--primary-100)] text-[var(--court)]"><FileText size={19} /></span>
                   <div className="min-w-0 flex-1">
                     <div className="flex flex-wrap items-center gap-2">
                       <h3 className="truncate font-semibold text-ink">{sourceName}</h3>
@@ -80,13 +81,13 @@ export function MaterialsPanel({
                     <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-slate-500">
                       <span>事实引用 {citations} 次</span>
                       <span>{item.raw_text ? `已解析 ${item.raw_text.length} 字符` : "尚无可用解析文本"}</span>
-                      {legacy && <span className="text-amber-700">旧材料：原始文件可能已不可用，已保留解析文本。</span>}
-                      {item.extraction_error && <span className="text-rose-700">解析提示：{item.extraction_error}</span>}
+                      {legacy && <span className="text-[var(--warning)]">旧材料：原始文件可能已不可用，已保留解析文本。</span>}
+                      {item.extraction_error && <span className="text-[var(--danger)]">解析提示：{item.extraction_error}</span>}
                     </div>
                   </div>
                   <div className="flex flex-wrap gap-2">
                     {!legacy && <button className="button-secondary px-2.5 py-2" type="button" title="下载材料" disabled={Boolean(busy)} onClick={() => onDownload(item)}><Download size={16} /></button>}
-                    <button className="button-secondary px-2.5 py-2 text-rose-700" type="button" title="删除材料" disabled={Boolean(busy)} onClick={() => onDelete(item)}><Trash2 size={16} /></button>
+                    <button className="button-secondary px-2.5 py-2 text-[var(--danger)]" type="button" title="删除材料" disabled={Boolean(busy)} onClick={() => onDelete(item)}><Trash2 size={16} /></button>
                   </div>
                 </div>
               </article>

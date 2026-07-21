@@ -21,9 +21,9 @@ export function ReasoningWorkbenchLayout({
   return (
     <div className="space-y-4">
       {header}
-      <div className="xl:hidden">{mobileNavigator}</div>
-      <div className="grid min-w-0 gap-4 xl:grid-cols-[280px_minmax(0,1fr)_360px] xl:items-start">
-        <aside className="hidden xl:sticky xl:top-20 xl:block">{reasoningRail}</aside>
+      <div className="lg:hidden">{mobileNavigator}</div>
+      <div className="grid min-w-0 gap-4 lg:grid-cols-[260px_minmax(0,1fr)] lg:items-start xl:grid-cols-[280px_minmax(0,1fr)_360px]">
+        <aside className="hidden lg:sticky lg:top-20 lg:block">{reasoningRail}</aside>
         <main className="min-w-0 space-y-4">{children}</main>
         <aside className="hidden xl:sticky xl:top-20 xl:block">{contextRail}</aside>
       </div>
@@ -39,7 +39,7 @@ export function ReasoningWorkbenchLayout({
 
       {contextOpen && (
         <div className="fixed inset-0 z-50 xl:hidden" role="dialog" aria-modal="true" aria-label="推理上下文">
-          <button className="absolute inset-0 bg-slate-950/25" aria-label="关闭上下文" onClick={() => setContextOpen(false)} />
+          <button className="absolute inset-0 bg-slate-950/30" aria-label="关闭上下文" onClick={() => setContextOpen(false)} />
           <div className="absolute inset-x-0 bottom-0 max-h-[82vh] overflow-y-auto rounded-t-lg border border-line bg-white p-4 shadow-2xl">
             <div className="mb-3 flex items-center justify-between">
               <h2 className="font-semibold text-ink">推理上下文</h2>

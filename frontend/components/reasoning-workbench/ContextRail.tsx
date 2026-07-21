@@ -76,7 +76,7 @@ export function ContextRail({ workspace, activeStep }: { workspace: CaseWorkspac
                 type="button"
                 key={item.id}
                 onClick={() => setSelectedDocumentId(item.id)}
-                className={`flex w-full items-start gap-3 rounded-md border px-3 py-3 text-left ${selectedDocumentId === item.id ? "border-court bg-[#edf5fa]" : "border-line hover:bg-slate-50"}`}
+                className={`flex w-full items-start gap-3 rounded-md border px-3 py-3 text-left ${selectedDocumentId === item.id ? "border-court bg-[var(--court-subtle)]" : "border-line hover:bg-[var(--surface-subtle)]"}`}
               >
                 <EntityCode kind="document" id={item.id} className="mt-0.5 shrink-0" />
                 <span className="min-w-0 flex-1">
@@ -112,5 +112,5 @@ export function ContextRail({ workspace, activeStep }: { workspace: CaseWorkspac
 }
 
 function ContextPlaceholder({ title, description }: { title: string; description: string }) {
-  return <div className="rounded-md border border-dashed border-line bg-slate-50 px-4 py-8 text-center"><div className="text-sm font-medium text-ink">{title}</div><p className="mt-2 text-xs leading-5 text-slate-500">{description}</p></div>;
+  return <div className="rounded-md border border-dashed border-line bg-[var(--surface-subtle)] px-4 py-8 text-center"><div className="text-sm font-medium text-ink">{title}</div><p className="mt-2 text-xs leading-5 text-slate-500">{description}</p></div>;
 }

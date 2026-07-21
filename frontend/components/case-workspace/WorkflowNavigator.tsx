@@ -21,9 +21,9 @@ export function WorkflowNavigator({ workspace, activeStep, onChange }: { workspa
               aria-current={active ? "step" : undefined}
               disabled={!step.implemented}
               onClick={() => step.implemented && onChange(step.code)}
-              className={`flex min-w-36 items-center gap-3 border-r border-line px-4 py-3 text-left last:border-r-0 ${active ? "bg-[#edf5fa]" : step.implemented ? "hover:bg-slate-50" : "cursor-default opacity-60"}`}
+              className={`flex min-w-36 items-center gap-3 border-r border-line px-4 py-3 text-left last:border-r-0 ${active ? "bg-[var(--court-subtle)]" : step.implemented ? "hover:bg-[var(--surface-subtle)]" : "cursor-default opacity-60"}`}
             >
-              <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full ${active ? "bg-court text-white" : "bg-slate-100 text-slate-500"}`}><Icon size={15} /></span>
+              <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full ${active ? "bg-court text-white" : "bg-[var(--surface-subtle)] text-slate-500"}`}><Icon size={15} /></span>
               <span>
                 <span className="block text-sm font-semibold text-ink">{step.title}</span>
                 <span className={`mt-1 block text-[11px] ${meta.className.split(" ").slice(1).join(" ")}`}>{meta.label}</span>

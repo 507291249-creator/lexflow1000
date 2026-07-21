@@ -7,12 +7,17 @@
   --surface: #ffffff;
   --surface-subtle: #f8fafb;
   --ink: #111827;
+  --ink-subtle: #374151;
   --muted: #4B5563;
   --line: #D8DEE6;
+  --line-subtle: #E5E7EB;
   --court: #235F8C;
   --court-hover: #173F5F;
+  --court-subtle: #EAF2F8;
   --mint: #256B5A;
+  --mint-subtle: #E7F2EE;
   --primary-700: #173F5F;
+  --primary-600: #173F5F;
   --primary-100: #EAF2F8;
   --success-700: #174F43;
   --success-600: #256B5A;
@@ -26,6 +31,34 @@
   --danger: #A83C38;
   --danger-bg: #F8E9E7;
   --inactive: #66717D;
+  --inactive-subtle: #E5E7EB;
+
+  /* Professional typography variables */
+  --text-xs: 0.6875rem;
+  --text-sm: 0.75rem;
+  --text-base: 0.875rem;
+  --text-md: 0.9375rem;
+  --text-lg: 1rem;
+  --text-xl: 1.125rem;
+  --text-2xl: 1.25rem;
+  --leading-tight: 1.25;
+  --leading-normal: 1.5;
+  --leading-relaxed: 1.625;
+
+  /* Professional spacing variables */
+  --spacing-1: 0.25rem;
+  --spacing-2: 0.5rem;
+  --spacing-3: 0.75rem;
+  --spacing-4: 1rem;
+  --spacing-5: 1.25rem;
+  --spacing-6: 1.5rem;
+  --spacing-8: 2rem;
+
+  /* Professional shadow variables */
+  --shadow-card-sm: 0 1px 2px rgba(0, 0, 0, 0.04);
+  --shadow-card: 0 1px 3px rgba(0, 0, 0, 0.06);
+  --shadow-card-lg: 0 2px 8px rgba(0, 0, 0, 0.08);
+
   background: var(--app-bg);
   color: var(--ink);
 }
@@ -42,51 +75,78 @@ textarea, input, select {
 }
 
 textarea:focus, input:focus, select:focus {
-  border-color: #78a6c2;
-  box-shadow: 0 0 0 3px rgb(31 88 124 / 9%);
+  border-color: #235F8C;
+  box-shadow: 0 0 0 3px rgba(35, 95, 140, 0.1);
 }
 
 button, a { -webkit-tap-highlight-color: transparent; }
 
 .bg-app { background: var(--app-bg); }
 
+/* Card styles */
 .card {
   @apply rounded-lg border border-line bg-white;
-  box-shadow: 0 1px 2px rgb(23 32 51 / 4%);
+  box-shadow: var(--shadow-card);
 }
 
+.card-sm {
+  @apply rounded-md border border-line bg-white p-3;
+  box-shadow: var(--shadow-card-sm);
+}
+
+.card-compact {
+  @apply rounded-md border border-line bg-white;
+  box-shadow: var(--shadow-card-sm);
+}
+
+/* Button styles */
 .button {
   @apply inline-flex items-center justify-center gap-2 rounded-md px-3 py-2 text-sm font-medium transition disabled:cursor-not-allowed disabled:opacity-50;
 }
 
+.button-sm {
+  @apply inline-flex items-center justify-center gap-1.5 rounded px-2.5 py-1.5 text-xs font-medium transition disabled:cursor-not-allowed disabled:opacity-50;
+}
+
 .button-primary {
-  @apply button bg-court text-white hover:bg-[#174560];
+  @apply button bg-court text-white hover:bg-[var(--court-hover)];
 }
 
 .button-secondary {
-  @apply button border border-line bg-white text-ink hover:bg-slate-50;
+  @apply button border border-line bg-white text-ink hover:bg-[var(--surface-subtle)];
 }
 
+.button-ghost {
+  @apply button text-ink hover:bg-[var(--surface-subtle)];
+}
+
+/* Badge styles */
 .badge {
   @apply rounded px-2 py-1 text-xs font-medium;
 }
 
+.badge-compact {
+  @apply rounded px-1.5 py-0.5 text-[11px] font-medium;
+}
+
+/* Navigation styles */
 .top-navigation {
   @apply sticky top-0 z-40 border-b border-line bg-white/95 backdrop-blur;
 }
 
 .top-nav-link {
-  @apply inline-flex shrink-0 items-center gap-2 rounded-md px-3 py-2 text-xs font-medium text-slate-600 transition hover:bg-slate-50 hover:text-ink sm:text-sm;
+  @apply inline-flex shrink-0 items-center gap-2 rounded-md px-3 py-2 text-xs font-medium text-slate-600 transition hover:bg-[var(--surface-subtle)] hover:text-ink sm:text-sm;
 }
 
 .top-nav-link-active {
-  @apply bg-[var(--primary-100)] text-[var(--court)];
+  @apply bg-[var(--primary-100)] text-[var(--court)] font-medium;
 }
 
 .entity-code {
-  @apply inline-flex shrink-0 items-center rounded border border-[#bdd5e2] bg-[#eef5f8] px-2 py-1 text-xs font-semibold text-court;
+  @apply inline-flex shrink-0 items-center rounded border border-[var(--line)] bg-[var(--primary-100)] px-2 py-1 text-xs font-semibold text-[var(--court)];
 }
 
+/* Status badge styles */
 .status-badge {
   @apply inline-flex shrink-0 items-center rounded px-2 py-1 text-xs font-medium;
 }
@@ -95,28 +155,195 @@ button, a { -webkit-tap-highlight-color: transparent; }
 .status-pending { @apply bg-[var(--warning-bg)] text-[var(--warning)]; }
 .status-confirmed { @apply bg-[var(--success-100)] text-[var(--success-600)]; }
 .status-rerun { @apply bg-[var(--warning-bg)] text-[var(--warning)]; }
-.status-expired { @apply bg-slate-100 text-[var(--inactive)]; }
+.status-expired { @apply bg-[var(--inactive-subtle)] text-[var(--inactive)]; }
 .status-failed { @apply bg-[var(--danger-bg)] text-[var(--danger)]; }
-.status-unavailable { @apply bg-slate-100 text-[var(--inactive)]; }
+.status-unavailable { @apply bg-[var(--inactive-subtle)] text-[var(--inactive)]; }
 
+/* Page heading styles */
 .page-heading {
   @apply flex flex-wrap items-end justify-between gap-4 border-b border-line pb-5;
 }
 
 .page-heading h1 { @apply mt-1 text-2xl font-semibold text-ink; }
 .page-heading p { @apply mt-2 max-w-3xl text-sm leading-6 text-slate-600; }
-.page-eyebrow { @apply text-xs font-semibold text-court; }
+.page-eyebrow { @apply text-xs font-semibold text-[var(--court)] uppercase tracking-wide; }
 
+/* Workspace header styles */
+.workspace-header {
+  @apply flex flex-wrap items-center justify-between gap-4 pb-6 border-b border-line;
+}
+
+.workspace-header h1 { @apply text-2xl font-semibold text-ink; }
+.workspace-header p { @apply mt-1 text-sm text-slate-500 max-w-2xl; }
+
+/* Feedback state styles */
 .feedback-state {
   @apply flex min-h-16 items-center gap-3 rounded-md border border-line bg-white px-4 py-3 text-sm text-slate-600;
 }
 
+/* Empty state styles */
 .empty-state {
   @apply flex min-h-28 flex-col items-center justify-center gap-3 rounded-md border border-dashed border-line bg-slate-50 px-5 py-6 text-center text-slate-400;
 }
 
 .empty-state p { @apply mt-1 max-w-xl text-sm leading-6 text-slate-500; }
 
+/* Reasoning card styles */
 .reasoning-card {
   @apply rounded-lg border border-line bg-white p-4;
+}
+
+.reasoning-card-compact {
+  @apply rounded-md border border-line bg-white p-4;
+}
+
+/* Metric card styles */
+.metric-card {
+  @apply rounded-md border border-line bg-white p-4;
+}
+
+/* Data table styles */
+.data-table {
+  @apply w-full text-sm;
+}
+
+.data-table thead th {
+  @apply px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider border-b border-line;
+}
+
+.data-table tbody tr {
+  @apply border-b border-line hover:bg-[var(--surface-subtle)] transition-colors;
+}
+
+.data-table td {
+  @apply px-4 py-3 text-left align-top;
+}
+
+/* Professional badge styles */
+.professional-badge {
+  @apply inline-flex shrink-0 items-center rounded px-2 py-0.5 text-[11px] font-medium;
+}
+
+/* Compact list styles */
+.compact-list {
+  @apply space-y-2;
+}
+
+.compact-list-item {
+  @apply flex items-start justify-between gap-3 px-4 py-2 border-b border-line last:border-0 hover:bg-[var(--surface-subtle)];
+}
+
+/* Workbench layout styles */
+.workbench-sidebar {
+  @apply hidden md:flex w-64 flex-col border-r border-line bg-white/95 backdrop-blur;
+}
+
+.workbench-main {
+  @apply flex-1 min-w-0;
+}
+
+/* Divider styles */
+.divider {
+  @apply border-t border-line my-4;
+}
+
+.divider-sm {
+  @apply border-t border-line my-3;
+}
+
+.divider-vertical {
+  @apply border-l border-line mx-4 h-4;
+}
+
+/* Utility classes */
+.text-ink-subtle { color: var(--ink-subtle); }
+.text-court { color: var(--court); }
+.text-success { color: var(--success-600); }
+.text-ai { color: var(--ai-600); }
+.text-warning { color: var(--warning); }
+.text-danger { color: var(--danger); }
+.text-inactive { color: var(--inactive); }
+
+.bg-surface-subtle { background: var(--surface-subtle); }
+.bg-primary-light { background: var(--primary-100); }
+.bg-success-light { background: var(--success-100); }
+.bg-ai-light { background: var(--ai-100); }
+.bg-warning-light { background: var(--warning-bg); }
+.bg-danger-light { background: var(--danger-bg); }
+.bg-inactive-light { background: var(--inactive-subtle); }
+
+.border-line-subtle { border-color: var(--line-subtle); }
+.border-primary-light { border-color: var(--primary-100); }
+.border-success-light { border-color: var(--success-100); }
+.border-ai-light { border-color: var(--ai-border); }
+
+/* ===== Case workspace components ===== */
+
+/* Unified workspace card surface */
+.workspace-card {
+  @apply rounded-lg border border-line bg-white p-4;
+  box-shadow: var(--shadow-card-sm);
+}
+
+.workspace-card-flush {
+  @apply rounded-lg border border-line bg-white;
+  box-shadow: var(--shadow-card-sm);
+}
+
+/* Section header: title + description + optional action slot */
+.section-header {
+  @apply flex flex-wrap items-start justify-between gap-3;
+}
+
+.section-header h2 {
+  @apply text-base font-semibold text-ink;
+}
+
+.section-header p {
+  @apply mt-1 text-xs leading-5 text-slate-500;
+}
+
+/* Version chip — fact / issue / analysis / report version markers */
+.version-chip {
+  @apply inline-flex shrink-0 items-center gap-1 rounded border border-line bg-[var(--surface-subtle)] px-1.5 py-0.5 text-[11px] font-medium text-slate-600;
+}
+
+.version-chip-court {
+  @apply border-[var(--court)] bg-[var(--court-subtle)] text-[var(--court)];
+}
+
+/* Source tag — provenance marker */
+.source-tag {
+  @apply inline-flex shrink-0 items-center gap-1 rounded bg-[var(--surface-subtle)] px-1.5 py-0.5 text-[11px] text-slate-500;
+}
+
+/* AI vs human content surfaces */
+.ai-surface {
+  @apply rounded-md border border-[var(--ai-border)] bg-[var(--ai-100)] px-3 py-2;
+}
+
+.human-surface {
+  @apply rounded-md border border-[var(--mint-subtle)] bg-[var(--mint-subtle)] px-3 py-2;
+}
+
+.neutral-surface {
+  @apply rounded-md border border-line bg-[var(--surface-subtle)] px-3 py-2;
+}
+
+/* Trace timeline */
+.trace-rail {
+  @apply absolute left-0 top-5 h-8 w-1 rounded-r bg-court;
+}
+
+.trace-diff-ai {
+  @apply max-h-72 overflow-auto whitespace-pre-wrap rounded-md border border-[var(--ai-border)] bg-[var(--ai-100)] p-3 text-xs leading-5 text-slate-700;
+}
+
+.trace-diff-human {
+  @apply max-h-72 overflow-auto whitespace-pre-wrap rounded-md border border-[var(--mint-subtle)] bg-[var(--mint-subtle)] p-3 text-xs leading-5 text-slate-700;
+}
+
+/* Rail node */
+.rail-node-active {
+  @apply bg-[var(--court-subtle)];
 }

@@ -27,7 +27,7 @@ export function CaseInfoDrawer({
   return (
     <div className="fixed inset-0 z-50" role="dialog" aria-modal="true" aria-label="案件管理信息">
       <button className="absolute inset-0 bg-slate-950/25" aria-label="关闭案件信息" onClick={onClose} />
-      <aside className="absolute inset-y-0 right-0 w-full max-w-3xl overflow-y-auto border-l border-line bg-[#f7f9fb] p-5 shadow-2xl">
+      <aside className="absolute inset-y-0 right-0 w-full max-w-3xl overflow-y-auto border-l border-line bg-[var(--surface-subtle)] p-5 shadow-2xl">
         <div className="mb-4 flex items-center justify-between">
           <div>
             <h2 className="text-lg font-semibold text-ink">案件信息</h2>
