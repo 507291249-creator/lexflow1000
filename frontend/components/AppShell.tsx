@@ -33,8 +33,8 @@ function Brand({ compact = false }: { compact?: boolean }) {
       <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-[var(--court)] text-white text-sm font-semibold">LF</span>
       {!compact && (
         <span className="min-w-0">
-          <span className="block truncate text-sm font-semibold text-white">LexFlow</span>
-          <span className="block truncate text-[11px] text-slate-400">法律推理工作台</span>
+          <span className="block truncate text-sm font-semibold text-ink">LexFlow</span>
+          <span className="block truncate text-[11px] text-slate-500">法律推理工作台</span>
         </span>
       )}
     </Link>
@@ -123,8 +123,8 @@ export function AppShell({ children }: { children: ReactNode }) {
       {/* Mobile drawer */}
       {mobileOpen && (
         <div className="fixed inset-0 z-50 lg:hidden" role="dialog" aria-modal="true" aria-label="全局导航">
-          <button className="absolute inset-0 bg-slate-950/40" aria-label="关闭导航" onClick={() => setMobileOpen(false)} />
-          <div className="absolute inset-y-0 left-0 w-72 max-w-[85%] overflow-y-auto p-4 shadow-xl" style={{ background: "var(--sidebar-bg)", borderRight: "1px solid var(--sidebar-border)" }}>
+          <button className="absolute inset-0 bg-slate-950/30" aria-label="关闭导航" onClick={() => setMobileOpen(false)} />
+          <div className="absolute inset-y-0 left-0 w-72 max-w-[85%] overflow-y-auto border-r border-line bg-white p-4 shadow-xl">
             <div className="mb-4 flex items-center justify-between">
               <Brand />
               <button type="button" className="button-secondary h-9 w-9 p-0" aria-label="关闭导航" onClick={() => setMobileOpen(false)}>
