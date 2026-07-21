@@ -20,12 +20,12 @@ export function ReasoningStatusBadge({ status, label }: { status: ProductStatus 
   return <span className={`status-badge ${meta.className}`}>{label || meta.label}</span>;
 }
 
-export function PageHeading({ eyebrow, title, description, action }: { eyebrow?: string; title: string; description: string; action?: ReactNode }) {
+export function PageHeading({ eyebrow, title, description, action }: { eyebrow?: string; title?: string; description: string; action?: ReactNode }) {
   return (
     <header className="page-heading">
       <div className="min-w-0">
         {eyebrow && <div className="page-eyebrow">{eyebrow}</div>}
-        <h1>{title}</h1>
+        {title && <h1>{title}</h1>}
         <p>{description}</p>
       </div>
       {action && <div className="shrink-0">{action}</div>}

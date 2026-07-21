@@ -1,7 +1,7 @@
 from datetime import datetime
-from typing import Any, Optional
+from typing import Any, Literal, Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class CaseCreate(BaseModel):
@@ -76,6 +76,20 @@ class BatchReview(BaseModel):
     reason: str = "人工复核 AI 建议后批量确认，后续按需逐项修订。"
 
 
+class FactPublishRequest(BaseModel):
+    operation_id: str = Field(min_length=1)
+    reason: str = Field(min_length=1)
+
+
+class FactPublishOut(BaseModel):
+    case_id: int
+    old_version: int
+    new_version: int
+    material_version: int
+    fact_ids: list[int] = Field(default_factory=list)
+    replayed: bool = False
+
+
 class IssueCreate(BaseModel):
     title: str
     description: str = ""
@@ -100,6 +114,52 @@ class IssueUpdate(BaseModel):
 class IssueAction(BaseModel):
     action: str
     reason: str
+
+
+class IssuePublishRequest(BaseModel):
+    operation_id: str = Field(min_length=1)
+    reason: str = Field(min_length=1)
+
+
+class IssuePublishOut(BaseModel):
+    case_id: int
+    old_version: int
+    new_version: int
+    fact_version: int
+    issue_ids: list[int] = Field(default_factory=list)
+    replayed: bool = False
+
+
+class AnalysisPublishRequest(BaseModel):
+    analysis_ids: list[int] = Field(min_length=1)
+    operation_id: str = Field(min_length=1)
+    reason: str = Field(min_length=1)
+
+
+class AnalysisPublishOut(BaseModel):
+    case_id: int
+    old_version: int
+    new_version: int
+    analysis_digest: str
+    analysis_ids: list[int] = Field(default_factory=list)
+    replayed: bool = False
+
+
+class ReportPublishRequest(BaseModel):
+    operation_id: str = Field(min_length=1)
+    reason: str = Field(min_length=1)
+
+
+class ReportPublishOut(BaseModel):
+    case_id: int
+    report_id: int
+    old_version: int
+    new_version: int
+    report_digest: str
+    analysis_version: int
+    analysis_digest: str
+    analysis_ids: list[int] = Field(default_factory=list)
+    replayed: bool = False
 
 
 class AIReview(BaseModel):
@@ -156,6 +216,216 @@ class DocumentOut(BaseModel):
     raw_text: str
     parsed_json: Any
     uploaded_at: datetime
+    original_filename: str = ""
+    mime_type: str = "application/octet-stream"
+    file_size: Optional[int] = None
+    checksum: Optional[str] = None
+    storage_provider: str = "legacy_local"
+    storage_key: Optional[str] = None
+    processing_status: str = "uploaded"
+    extraction_error: str = ""
+    updated_at: datetime
+
+
+class RedactionDetectRequest(BaseModel):
+    document_id: int
+    force: bool = False
+
+
+class RedactionItemCreate(BaseModel):
+    start_offset: int
+    end_offset: int
+    entity_type: str
+    replacement: str = ""
+    action: str = "full_replace"
+    confidence: float = 1.0
+    rule_code: str = "manual"
+    review_status: str = "人工新增"
+
+
+class RedactionItemUpdate(BaseModel):
+    entity_type: Optional[str] = None
+    replacement: Optional[str] = None
+    action: Optional[str] = None
+    review_status: Optional[str] = None
+
+
+class RedactionConfirm(BaseModel):
+    use_original: bool = False
+    original_material_confirmed: bool = False
+    risk_acknowledged: bool = False
+
+
+class RedactionBatchAccept(BaseModel):
+    review_status: str = "已接受"
+
+
+class RedactionItemOut(BaseModel):
+    id: int
+    redaction_id: int
+    entity_type: str
+    start_offset: int
+    end_offset: int
+    replacement: str
+    action: str
+    confidence: float
+    rule_code: str
+    review_status: str
+    original_fingerprint: str
+    created_at: datetime
+    updated_at: datetime
+
+
+class RedactionRecordOut(BaseModel):
+    id: int
+    case_id: int
+    document_id: int
+    source_checksum: str
+    version: int
+    status: str
+    redacted_text: str
+    analysis_mode: str
+    confirmed_at: Optional[datetime] = None
+    created_at: datetime
+    updated_at: datetime
+    source_current: bool = True
+    items: list[RedactionItemOut] = Field(default_factory=list)
+
+
+WorkflowStepCode = Literal[
+    "case_input",
+    "materials",
+    "fact_review",
+    "issue_review",
+    "legal_analysis",
+    "report",
+]
+
+
+class BlockerSchema(BaseModel):
+    code: str
+    step: WorkflowStepCode
+    severity: Literal["blocking", "warning", "info"]
+    message: str
+    entity_type: Optional[str] = None
+    entity_ids: list[int] = Field(default_factory=list)
+    resolution: Optional[str] = None
+    details: dict[str, Any] = Field(default_factory=dict)
+
+
+class StaleOutputSchema(BaseModel):
+    entity_type: str
+    entity_id: int
+    title: str
+    review_status: str
+    is_stale: bool
+    stale_reason: str
+    stale_at: Optional[datetime] = None
+    input_versions: dict[str, int] = Field(default_factory=dict)
+    current_versions: dict[str, int] = Field(default_factory=dict)
+    required_action: str
+
+
+class CaseInputCoverageSchema(BaseModel):
+    complete: bool
+
+
+class MaterialsCoverageSchema(BaseModel):
+    total: int
+    ready: int
+    has_inline_input: bool
+
+
+class FactsCoverageSchema(BaseModel):
+    total: int
+    reviewed: int
+    confirmed: int
+    stale: int
+
+
+class IssuesCoverageSchema(BaseModel):
+    total: int
+    reviewed: int
+    stale: int
+
+
+class AnalysisCoverageSchema(BaseModel):
+    expected: int
+    generated: int
+    approved: int
+    stale: int
+
+
+class ReportCoverageSchema(BaseModel):
+    generated: bool
+    current: bool
+
+
+class CoverageSchema(BaseModel):
+    case_input: CaseInputCoverageSchema
+    materials: MaterialsCoverageSchema
+    facts: FactsCoverageSchema
+    issues: IssuesCoverageSchema
+    analysis: AnalysisCoverageSchema
+    report: ReportCoverageSchema
+
+
+class NextActionSchema(BaseModel):
+    code: str
+    label: str
+    entity_type: Optional[str] = None
+    entity_ids: list[int] = Field(default_factory=list)
+
+
+class WorkflowVersionsSchema(BaseModel):
+    material_version: int
+    fact_version: int
+    issue_version: int
+    analysis_version: int
+    report_version: int
+
+
+ReportLifecycleStatus = Literal[
+    "REPORT_DRAFT_EXISTS",
+    "REPORT_PENDING_REVIEW",
+    "REPORT_PUBLISHED",
+]
+
+
+class WorkflowStateSchema(BaseModel):
+    current_step: WorkflowStepCode
+    completed_steps: list[WorkflowStepCode] = Field(default_factory=list)
+    available_steps: list[WorkflowStepCode] = Field(default_factory=list)
+    blockers: list[BlockerSchema] = Field(default_factory=list)
+    stale_outputs: list[StaleOutputSchema] = Field(default_factory=list)
+    coverage: CoverageSchema
+    next_action: Optional[NextActionSchema] = None
+    versions: WorkflowVersionsSchema
+    report_status: Optional[ReportLifecycleStatus] = None
+
+    facts_confirmed: bool = False
+    issues_confirmed: bool = False
+    approved_analysis_count: int = 0
+    analysis_count: int = 0
+    report_ready: bool = False
+    report_current: bool = False
+
+
+class FactSourceOut(BaseModel):
+    id: int
+    fact_id: int
+    document_id: int
+    source_text: str
+    page_number: Optional[int] = None
+    paragraph_index: Optional[int] = None
+    start_offset: Optional[int] = None
+    end_offset: Optional[int] = None
+    relation_type: str = "support"
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
 
 
 class EvidenceOut(BaseModel):
@@ -314,3 +584,16 @@ class IssueOut(BaseModel):
     issue_version: int = 1
     created_at: datetime
     updated_at: datetime
+
+
+class WorkspaceSchema(BaseModel):
+    case: CaseOut
+    documents: list[DocumentOut] = Field(default_factory=list)
+    evidences: list[EvidenceOut] = Field(default_factory=list)
+    work_units: list[WorkUnitOut] = Field(default_factory=list)
+    facts: list[FactOut] = Field(default_factory=list)
+    issues: list[IssueOut] = Field(default_factory=list)
+    ai_outputs: list[AIOutputOut] = Field(default_factory=list)
+    traces: list[TraceOut] = Field(default_factory=list)
+    memory_candidates: list[MemoryOut] = Field(default_factory=list)
+    workflow_state: WorkflowStateSchema

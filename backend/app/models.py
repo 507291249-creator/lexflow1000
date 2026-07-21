@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Integer, String, Text
+from sqlalchemy import BigInteger, Boolean, Column, DateTime, Float, ForeignKey, Integer, String, Text, text
 from sqlalchemy.orm import relationship
 
 from .database import Base
@@ -25,8 +25,13 @@ class Case(Base):
     next_follow_up_at = Column(String(32), default="")
     next_action = Column(Text, default="")
     workflow_mode = Column(String(40), default="standard")
-    fact_version = Column(Integer, default=1)
-    issue_version = Column(Integer, default=1)
+    material_version = Column(Integer, nullable=False, default=0, server_default="0")
+    material_digest = Column(String(64), nullable=True)
+    fact_version = Column(Integer, nullable=False, default=0, server_default="0")
+    issue_version = Column(Integer, nullable=False, default=0, server_default="0")
+    analysis_version = Column(Integer, nullable=False, default=0, server_default="0")
+    report_version = Column(Integer, nullable=False, default=0, server_default="0")
+    report_digest = Column(String(64), nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 
     documents = relationship("Document", back_populates="case", cascade="all, delete-orphan")
@@ -40,20 +45,47 @@ class Case(Base):
     work_units = relationship("WorkUnit", back_populates="case", cascade="all, delete-orphan")
     facts = relationship("CaseFact", back_populates="case", cascade="all, delete-orphan")
     issues = relationship("CaseIssue", back_populates="case", cascade="all, delete-orphan")
+    redactions = relationship("RedactionRecord", back_populates="case", cascade="all, delete-orphan")
 
 
 class Document(Base):
     __tablename__ = "documents"
 
     id = Column(Integer, primary_key=True, index=True)
-    case_id = Column(Integer, ForeignKey("cases.id"), nullable=False)
+    case_id = Column(Integer, ForeignKey("cases.id"), nullable=False, index=True)
     filename = Column(String(255), nullable=False)
     file_type = Column(String(40), nullable=False)
     raw_text = Column(Text, default="")
     parsed_json = Column(Text, default="{}")
     uploaded_at = Column(DateTime, default=datetime.utcnow)
+    original_filename = Column(String(255), nullable=False, default="", server_default="")
+    mime_type = Column(
+        String(150),
+        nullable=False,
+        default="application/octet-stream",
+        server_default="application/octet-stream",
+    )
+    file_size = Column(BigInteger, nullable=True)
+    checksum = Column(String(64), nullable=True, index=True)
+    storage_provider = Column(String(40), nullable=False, default="legacy_local", server_default="legacy_local")
+    storage_key = Column(String(512), nullable=True)
+    # uploaded/parsing/parsed/analyzing/ready/parse_failed/analysis_failed/upload_failed
+    processing_status = Column(String(40), nullable=False, default="uploaded", server_default="uploaded", index=True)
+    extraction_error = Column(Text, nullable=False, default="", server_default="")
+    updated_at = Column(
+        DateTime,
+        nullable=True,
+        default=datetime.utcnow,
+        onupdate=datetime.utcnow,
+    )
 
     case = relationship("Case", back_populates="documents")
+    fact_sources = relationship(
+        "FactSource",
+        back_populates="document",
+        cascade="all, delete-orphan",
+    )
+    redactions = relationship("RedactionRecord", back_populates="document", cascade="all, delete-orphan")
 
 
 class Evidence(Base):
@@ -84,8 +116,11 @@ class AIOutput(Base):
     work_unit_id = Column(Integer, ForeignKey("work_units.id"), nullable=True)
     review_status = Column(String(40), default="待复核")
     version = Column(Integer, default=1)
-    fact_version = Column(Integer, default=1)
-    issue_version = Column(Integer, default=1)
+    material_version = Column(Integer, nullable=False, default=0, server_default="0")
+    fact_version = Column(Integer, nullable=False, default=0, server_default="0")
+    issue_version = Column(Integer, nullable=False, default=0, server_default="0")
+    analysis_version = Column(Integer, nullable=False, default=0, server_default="0")
+    report_version = Column(Integer, nullable=False, default=0, server_default="0")
     input_snapshot_json = Column(Text, default="{}")
     created_at = Column(DateTime, default=datetime.utcnow)
 
@@ -165,11 +200,105 @@ class CaseFact(Base):
     source_document = Column(String(255), default="")
     status = Column(String(40), default="待确认")
     confidence = Column(String(40), default="中")
-    fact_version = Column(Integer, default=1)
+    material_version = Column(Integer, nullable=False, default=0, server_default="0")
+    fact_version = Column(Integer, nullable=False, default=0, server_default="0")
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     case = relationship("Case", back_populates="facts")
+    sources = relationship(
+        "FactSource",
+        back_populates="fact",
+        cascade="all, delete-orphan",
+    )
+
+
+class FactSource(Base):
+    __tablename__ = "fact_sources"
+
+    id = Column(Integer, primary_key=True)
+    fact_id = Column(Integer, ForeignKey("case_facts.id", ondelete="CASCADE"), nullable=False, index=True)
+    document_id = Column(Integer, ForeignKey("documents.id", ondelete="CASCADE"), nullable=False, index=True)
+    source_text = Column(Text, nullable=False)
+    page_number = Column(Integer, nullable=True)
+    paragraph_index = Column(Integer, nullable=True)
+    start_offset = Column(Integer, nullable=True)
+    end_offset = Column(Integer, nullable=True)
+    # support/supplement/conflict
+    relation_type = Column(String(40), nullable=False, default="support", server_default="support")
+    created_at = Column(
+        DateTime,
+        nullable=False,
+        default=datetime.utcnow,
+        server_default=text("CURRENT_TIMESTAMP"),
+    )
+    updated_at = Column(
+        DateTime,
+        nullable=False,
+        default=datetime.utcnow,
+        onupdate=datetime.utcnow,
+        server_default=text("CURRENT_TIMESTAMP"),
+    )
+
+    fact = relationship("CaseFact", back_populates="sources")
+    document = relationship("Document", back_populates="fact_sources")
+
+
+class RedactionRecord(Base):
+    __tablename__ = "redaction_records"
+
+    id = Column(Integer, primary_key=True, index=True)
+    case_id = Column(Integer, ForeignKey("cases.id", ondelete="CASCADE"), nullable=False, index=True)
+    document_id = Column(Integer, ForeignKey("documents.id", ondelete="CASCADE"), nullable=False, index=True)
+    source_checksum = Column(String(64), nullable=False, index=True)
+    version = Column(Integer, nullable=False, default=1, server_default="1")
+    # detected / draft / confirmed / superseded / original_confirmed
+    status = Column(String(40), nullable=False, default="detected", server_default="detected")
+    redacted_text = Column(Text, nullable=False, default="", server_default="")
+    # redacted / original. C1 records the choice but does not reroute existing agents yet.
+    analysis_mode = Column(String(20), nullable=False, default="redacted", server_default="redacted")
+    confirmed_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow, server_default=text("CURRENT_TIMESTAMP"))
+    updated_at = Column(
+        DateTime,
+        nullable=False,
+        default=datetime.utcnow,
+        onupdate=datetime.utcnow,
+        server_default=text("CURRENT_TIMESTAMP"),
+    )
+
+    case = relationship("Case", back_populates="redactions")
+    document = relationship("Document", back_populates="redactions")
+    items = relationship("RedactionItem", back_populates="redaction", cascade="all, delete-orphan")
+
+
+class RedactionItem(Base):
+    __tablename__ = "redaction_items"
+
+    id = Column(Integer, primary_key=True, index=True)
+    redaction_id = Column(Integer, ForeignKey("redaction_records.id", ondelete="CASCADE"), nullable=False, index=True)
+    entity_type = Column(String(80), nullable=False)
+    start_offset = Column(Integer, nullable=False)
+    end_offset = Column(Integer, nullable=False)
+    replacement = Column(String(255), nullable=False, default="", server_default="")
+    # consistent_alias / partial_mask / full_replace / keep
+    action = Column(String(40), nullable=False, default="full_replace", server_default="full_replace")
+    confidence = Column(Float, nullable=False, default=1.0, server_default="1.0")
+    rule_code = Column(String(80), nullable=False, default="manual", server_default="manual")
+    # 待确认 / 已接受 / 已保留 / 已驳回 / 人工新增
+    review_status = Column(String(40), nullable=False, default="待确认", server_default="待确认")
+    # A one-way SHA-256 fingerprint. The original sensitive value is never duplicated here.
+    original_fingerprint = Column(String(64), nullable=False)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow, server_default=text("CURRENT_TIMESTAMP"))
+    updated_at = Column(
+        DateTime,
+        nullable=False,
+        default=datetime.utcnow,
+        onupdate=datetime.utcnow,
+        server_default=text("CURRENT_TIMESTAMP"),
+    )
+
+    redaction = relationship("RedactionRecord", back_populates="items")
 
 
 class CaseIssue(Base):
@@ -187,7 +316,8 @@ class CaseIssue(Base):
     related_facts = Column(Text, default="[]")
     # JSON array of CaseFact IDs. related_facts is retained for historical records.
     related_fact_ids = Column(Text, default="[]")
-    issue_version = Column(Integer, default=1)
+    fact_version = Column(Integer, nullable=False, default=0, server_default="0")
+    issue_version = Column(Integer, nullable=False, default=0, server_default="0")
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 

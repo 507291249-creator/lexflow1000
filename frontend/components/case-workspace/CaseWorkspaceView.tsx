@@ -72,7 +72,7 @@ export function CaseWorkspaceView({ caseId, workspace, activeStep, onStepChange,
             {workspace.case.workflow_mode !== "ai_case" && <div className="flex justify-end"><button className="button-primary" disabled={Boolean(busy)} onClick={() => request(`/cases/${caseId}/workflow/run-standard`)}><Play size={16} />运行标准工作流</button></div>}
           </>
         )}
-        {activeStep === "materials" && <MaterialsPanel documents={workspace.documents} facts={workspace.facts} busy={busy} onUpload={upload} onDownload={(item) => void download(item)} onDelete={(item) => void remove(item)} />}
+        {activeStep === "materials" && <MaterialsPanel caseId={caseId} documents={workspace.documents} facts={workspace.facts} busy={busy} onUpload={upload} onDownload={(item) => void download(item)} onDelete={(item) => void remove(item)} onWorkspaceReload={onReload} />}
         {activeStep === "fact_review" && <FactReviewPanel caseId={caseId} workspace={workspace} busy={busy} request={request} />}
         {activeStep === "issue_review" && <IssueReviewPanel caseId={caseId} workspace={workspace} busy={busy} request={request} />}
         {activeStep === "legal_analysis" && <AnalysisPanel caseId={caseId} workspace={workspace} busy={busy} request={request} />}

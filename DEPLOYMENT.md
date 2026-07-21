@@ -20,20 +20,20 @@
 
 ## 1.1 PostgreSQL 迁移
 
-Sprint 1A 引入 Alembic。当前迁移链只有一个 head：`0003_demo_redactions`。迁移命令应在 Render 后端实例或使用同一 `DATABASE_URL` 的受控终端中执行，工作目录为 `/app`。生产 Runbook 使用明确 revision，避免未来新增 migration 后旧 Runbook 意外越过已验证边界。
+Sprint 1A 引入 Alembic。当前迁移链只有一个 head：`0006_report_version_lineage`，顺序为 `0001_baseline` → `0002_mvp2_documents_fact_sources` → `0003_demo_redactions` → `0004_workflow_version_lineage` → `0005_analysis_version_lineage` → `0006_report_version_lineage`。迁移命令应在 Render 后端实例或使用同一 `DATABASE_URL` 的受控终端中执行，工作目录为 `/app`。生产 Runbook 使用明确 revision，避免未来新增 migration 后旧 Runbook 意外越过已验证边界。
 
 ### 全新 PostgreSQL
 
 ```bash
 cd /app
-alembic -c alembic.ini upgrade 0003_demo_redactions
+alembic -c alembic.ini upgrade 0006_report_version_lineage
 alembic -c alembic.ini current
 ```
 
 预期当前版本为：
 
 ```text
-0003_demo_redactions (head)
+0006_report_version_lineage (head)
 ```
 
 ### 已有 MVP 1 PostgreSQL
@@ -55,7 +55,7 @@ alembic -c alembic.ini current
 
 ```bash
 alembic -c alembic.ini stamp 0001_baseline
-alembic -c alembic.ini upgrade 0003_demo_redactions
+alembic -c alembic.ini upgrade 0006_report_version_lineage
 alembic -c alembic.ini current
 ```
 
@@ -76,16 +76,54 @@ SELECT original_filename, mime_type, processing_status, storage_provider
 FROM documents
 ORDER BY id
 LIMIT 20;
+SELECT material_version, material_digest, fact_version, issue_version, analysis_version,
+       report_version, report_digest
+FROM cases
+ORDER BY id
+LIMIT 20;
+SELECT material_version, fact_version FROM case_facts ORDER BY id LIMIT 20;
+SELECT fact_version, issue_version FROM case_issues ORDER BY id LIMIT 20;
+SELECT material_version, fact_version, issue_version, analysis_version, report_version FROM ai_outputs ORDER BY id LIMIT 20;
 SELECT indexname FROM pg_indexes
 WHERE tablename IN ('documents', 'fact_sources', 'redaction_records', 'redaction_items')
 ORDER BY tablename, indexname;
 ```
 
-`alembic current` 与 `SELECT version_num` 均必须显示 `0003_demo_redactions`。另外确认 `redaction_records` 和 `redaction_items` 存在，且上述四张表的预期索引完整。
+`alembic current` 与 `SELECT version_num` 均必须显示 `0006_report_version_lineage`。另外确认 `redaction_records` 和 `redaction_items` 存在，W1、分析及报告版本谱系字段存在，且上述四张表的预期索引完整。
 
 ### 回滚边界
 
-只回滚 0003、保留 0002 的 Document 字段与 `fact_sources`：
+只回滚 0006、保留 0005 分析版本谱系：
+
+```bash
+cd /app
+alembic -c alembic.ini downgrade 0005_analysis_version_lineage
+alembic -c alembic.ini current
+```
+
+该操作会删除 `cases.report_version`、`cases.report_digest` 和 `ai_outputs.report_version`。只有在应用同步回滚到不依赖报告版本谱系的 0005 兼容版本时才能执行；已有报告输出本身不会被删除。
+
+继续回滚 0005、保留 0004 工作流版本谱系：
+
+```bash
+cd /app
+alembic -c alembic.ini downgrade 0004_workflow_version_lineage
+alembic -c alembic.ini current
+```
+
+该操作会删除 `cases.analysis_version` 和 `ai_outputs.analysis_version`。只有在应用同步回滚到不依赖分析版本谱系的 0004 兼容版本时才能执行；已有分析输出本身不会被删除。
+
+继续回滚 0004、保留 0003 的脱敏表：
+
+```bash
+cd /app
+alembic -c alembic.ini downgrade 0003_demo_redactions
+alembic -c alembic.ini current
+```
+
+该操作会删除案件、事实、争点和 AI 输出上的 W1 版本谱系字段。只有在应用同步回滚到不依赖这些字段的 0003 兼容版本时才能执行；downgrade 不会恢复升级前已被回填或覆盖的业务语义。
+
+继续回滚 0003、保留 0002 的 Document 字段与 `fact_sources`：
 
 ```bash
 cd /app
@@ -95,7 +133,7 @@ alembic -c alembic.ini current
 
 该操作会删除 `redaction_records`、`redaction_items` 及其中全部脱敏版本数据。只有在确认不需要保留这些数据，并且应用同步回滚到兼容 0002 的版本时才能执行。
 
-从当前 head 同时回滚 0003 和 0002、恢复到 MVP 1 baseline：
+从当前 head 回滚 0006、0005、0004、0003 和 0002，恢复到 MVP 1 baseline：
 
 ```bash
 cd /app
@@ -103,11 +141,11 @@ alembic -c alembic.ini downgrade 0001_baseline
 alembic -c alembic.ini current
 ```
 
-该操作除删除脱敏表外，还会删除 `fact_sources` 及 Document 新字段。只有在确认不需要保留 Sprint 1A 与脱敏数据、已完成备份，并且应用同步回滚到只依赖 MVP 1 schema 的版本时才能执行。
+该操作除删除报告、分析与工作流版本谱系字段和脱敏表外，还会删除 `fact_sources` 及 Document 新字段。只有在确认不需要保留 Sprint 1A、脱敏与版本谱系数据、已完成备份，并且应用同步回滚到只依赖 MVP 1 schema 的版本时才能执行。
 
-## 1.2 生产迁移到 0003 Runbook
+## 1.2 生产迁移到 0006 Runbook
 
-以下步骤适用于生产 PostgreSQL 从未登记 Alembic 的 MVP 1 结构、`0001_baseline` 或 `0002_mvp2_documents_fact_sources` 升级到当前唯一 head `0003_demo_redactions`。执行人必须同时具备 Render 服务管理权限、数据库备份权限和数据库连接权限。整个迁移窗口内不要进行其他应用或数据库部署。
+以下步骤适用于生产 PostgreSQL 从未登记 Alembic 的 MVP 1 结构、`0001_baseline`、`0002_mvp2_documents_fact_sources`、`0003_demo_redactions`、`0004_workflow_version_lineage` 或 `0005_analysis_version_lineage` 升级到当前唯一 head `0006_report_version_lineage`。执行人必须同时具备 Render 服务管理权限、数据库备份权限和数据库连接权限。整个迁移窗口内不要进行其他应用或数据库部署。
 
 ### 步骤 1：备份生产 PostgreSQL
 
@@ -155,7 +193,7 @@ psql "$DATABASE_URL" -v schema_name=public \
   | tee "../migration-backups/production-schema-before.txt"
 ```
 
-确认 `missing_mvp1_table` 没有返回记录，且关键检查全部为 `t`。如果已经存在 `alembic_version`，先确认其值：如果是 `0003_demo_redactions`，不要重复 stamp 或 upgrade，转到步骤 7；如果是 `0001_baseline` 或 `0002_mvp2_documents_fact_sources`，不要 stamp，继续执行步骤 6；如果是其他 revision、出现多个 revision 或结构包含未记录的手工改动，停止迁移并先做差异评审。
+确认 `missing_mvp1_table` 没有返回记录，且关键检查全部为 `t`。如果已经存在 `alembic_version`，先确认其值：如果是 `0006_report_version_lineage`，不要重复 stamp 或 upgrade，转到步骤 7；如果是 `0001_baseline`、`0002_mvp2_documents_fact_sources`、`0003_demo_redactions`、`0004_workflow_version_lineage` 或 `0005_analysis_version_lineage`，不要 stamp，继续执行步骤 6；如果是其他 revision、出现多个 revision 或结构包含未记录的手工改动，停止迁移并先做差异评审。
 
 将线上结构与 `0001_baseline` 比对时，在**另一个临时 PostgreSQL 数据库**执行：
 
@@ -185,18 +223,18 @@ alembic -c alembic.ini current
 
 ### 步骤 6：升级到 head
 
-**前置条件**：应用写入已停止，当前版本已确认是 `0001_baseline` 或 `0002_mvp2_documents_fact_sources`；未登记 Alembic 的 MVP 1 旧库必须先完成步骤 5。
+**前置条件**：应用写入已停止，当前版本已确认是 `0001_baseline`、`0002_mvp2_documents_fact_sources` 或 `0003_demo_redactions`；未登记 Alembic 的 MVP 1 旧库必须先完成步骤 5。
 
 ```bash
-alembic -c alembic.ini upgrade 0003_demo_redactions
+alembic -c alembic.ini upgrade 0006_report_version_lineage
 alembic -c alembic.ini current
 ```
 
-预期为 `0003_demo_redactions (head)`。若命令失败，不要启动新版本应用，也不要反复执行未知状态的命令；先保存完整日志，运行只读审计确认事务是否已回滚。PostgreSQL DDL 在本迁移中应随事务回滚，确认版本仍为升级前的 `0001` 或 `0002` 后再定位错误。
+预期为 `0006_report_version_lineage (head)`。若命令失败，不要启动新版本应用，也不要反复执行未知状态的命令；先保存完整日志，运行只读审计确认事务是否已回滚。PostgreSQL DDL 在本迁移中应随事务回滚，确认版本仍为升级前的 `0001`、`0002`、`0003`、`0004` 或 `0005` 后再定位错误。
 
 ### 步骤 7：验证迁移和回填
 
-**前置条件**：`upgrade 0003_demo_redactions` 成功，或步骤 4 已确认数据库原本就在 `0003_demo_redactions`。
+**前置条件**：`upgrade 0006_report_version_lineage` 成功，或步骤 4 已确认数据库原本就在 `0006_report_version_lineage`。
 
 再次运行审计脚本，并执行：
 
@@ -212,6 +250,14 @@ SELECT to_regclass('public.redaction_records') AS redaction_records_table,
        to_regclass('public.redaction_items') AS redaction_items_table;
 SELECT count(*) FROM redaction_records;
 SELECT count(*) FROM redaction_items;
+SELECT id, material_version, material_digest, fact_version, issue_version
+FROM cases ORDER BY id LIMIT 100;
+SELECT id, case_id, material_version, fact_version
+FROM case_facts ORDER BY id LIMIT 100;
+SELECT id, case_id, fact_version, issue_version
+FROM case_issues ORDER BY id LIMIT 100;
+SELECT id, case_id, material_version, fact_version, issue_version
+FROM ai_outputs ORDER BY id LIMIT 100;
 SELECT tablename, indexname
 FROM pg_indexes
 WHERE schemaname = 'public'
@@ -219,7 +265,7 @@ WHERE schemaname = 'public'
 ORDER BY tablename, indexname;
 ```
 
-确认 `version_num` 为 `0003_demo_redactions`，两张脱敏表及其预期索引存在。确认文件名、MIME、状态和时间回填符合规则，无法推断的 size/checksum/storage_key 为 `NULL`。对迁移前后各业务表执行 `SELECT count(*)`，记录数量并核对无意外减少。任何版本、结构或数据不一致都应停止部署并进入恢复流程。
+确认 `version_num` 为 `0006_report_version_lineage`，两张脱敏表及其预期索引、四张业务表上的 W1 版本谱系字段、分析版本字段和报告版本字段均存在。确认文件名、MIME、状态和时间回填符合规则，无法推断的 size/checksum/storage_key 为 `NULL`；已有案件的 `material_version` 应为 1，既有事实与争点版本应被保留或以 0 补齐，既有分析与报告版本应初始化为 0，`report_digest` 应为 `NULL`。对迁移前后各业务表执行 `SELECT count(*)`，记录数量并核对无意外减少。任何版本、结构或数据不一致都应停止部署并进入恢复流程。
 
 ### 步骤 8：部署应用
 
@@ -227,9 +273,9 @@ ORDER BY tablename, indexname;
 
 部署记录的 commit，确认 Render 构建日志中依赖安装成功。暂时保持 Auto-Deploy 关闭，以便出现问题时能够控制回滚。应用启动后先只访问健康检查，不立即开放前端写入。
 
-PostgreSQL 环境不会在应用启动时执行 `create_all()`，也不会动态补齐 Sprint 1A 字段或 0003 脱敏表，因此第 6 步的 Alembic 升级是强制前置条件。若跳过迁移，应用应保持停止状态，而不是依赖启动逻辑修改生产结构。
+PostgreSQL 环境不会在应用启动时执行 `create_all()`，也不会动态补齐 Sprint 1A 字段、0003 脱敏表或 0004 版本谱系字段，因此第 6 步的 Alembic 升级是强制前置条件。若跳过迁移，应用应保持停止状态，而不是依赖启动逻辑修改生产结构。
 
-如果应用启动失败，优先保留数据库在 `0003_demo_redactions`，回滚到兼容 0003 的前一个已验证应用 commit；不要在应用仍读取脱敏表或 Document 新字段时 downgrade 数据库。
+如果应用启动失败，优先保留数据库在 `0006_report_version_lineage`，回滚到兼容 0006 的前一个已验证应用 commit；不要在应用仍读取报告、分析或 W1 版本谱系字段、脱敏表或 Document 新字段时 downgrade 数据库。
 
 ### 步骤 9：冒烟测试
 
@@ -248,7 +294,15 @@ FROM decision_traces ORDER BY id DESC LIMIT 20;
 
 ### 步骤 10：恢复策略
 
-**优先策略：应用回滚**。如果 0003 已成功且数据完整，但新应用有问题，部署兼容 `0003_demo_redactions` 的已验证 commit；不要删除新表或新字段。
+**优先策略：应用回滚**。如果 0006 已成功且数据完整，但新应用有问题，部署兼容 `0006_report_version_lineage` 的已验证 commit；不要删除新表或新字段。
+
+**只回滚 0004** 仅适用于应用也将同步回滚到不依赖工作流版本谱系字段的 0003 兼容版本。该操作会删除这些字段，不会还原升级后的业务状态；执行前必须备份并确认没有代码继续读取它们：
+
+```bash
+cd /app
+alembic -c alembic.ini downgrade 0003_demo_redactions
+alembic -c alembic.ini current
+```
 
 **只回滚 0003** 仅适用于确认没有脱敏版本数据需要保留，且应用也将同步回滚到兼容 0002 的情况：
 
@@ -258,7 +312,7 @@ alembic -c alembic.ini downgrade 0002_mvp2_documents_fact_sources
 alembic -c alembic.ini current
 ```
 
-**回滚到 MVP 1 baseline** 仅适用于确认没有 Sprint 1A 与脱敏数据需要保留，且应用也将同步回滚到只依赖 MVP 1 schema 的情况：
+**回滚到 MVP 1 baseline** 仅适用于确认没有 Sprint 1A、脱敏与版本谱系数据需要保留，且应用也将同步回滚到只依赖 MVP 1 schema 的情况：
 
 ```bash
 cd /app

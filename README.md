@@ -106,7 +106,7 @@ alembic -c alembic.ini upgrade head
 uvicorn app.main:app --reload --port 8000
 ```
 
-`alembic upgrade head` 会创建或升级数据库结构。当前唯一 migration head 为 `0003_demo_redactions`。本地 SQLite 启动阶段暂时保留 `create_all()` 和旧版动态补字段逻辑作为兼容桥梁；PostgreSQL 启动不会自动建表，必须在应用启动前完成 Alembic 迁移，避免 `create_all()` 与 0002 冲突。Sprint 1A 新增的 Document 字段与 `fact_sources`、0003 新增的脱敏版本表只由 Alembic 管理。完成两轮稳定生产迁移后将移除旧版动态迁移逻辑。
+`alembic upgrade head` 会创建或升级数据库结构。当前唯一 migration head 为 `0006_report_version_lineage`，迁移顺序为 `0001_baseline` → `0002_mvp2_documents_fact_sources` → `0003_demo_redactions` → `0004_workflow_version_lineage` → `0005_analysis_version_lineage` → `0006_report_version_lineage`。本地 SQLite 启动阶段暂时保留 `create_all()` 和旧版动态补字段逻辑作为兼容桥梁；PostgreSQL 启动不会自动建表，必须在应用启动前完成 Alembic 迁移，避免 `create_all()` 与 0002 冲突。Sprint 1A 新增的 Document 字段与 `fact_sources`、0003 新增的脱敏版本表、0004 新增的工作流版本谱系字段、0005 新增的分析版本谱系字段以及 0006 新增的报告版本谱系字段只由 Alembic 管理。完成两轮稳定生产迁移后将移除旧版动态迁移逻辑。
 
 ### 文件存储
 
@@ -148,7 +148,7 @@ alembic -c alembic.ini upgrade head
 alembic -c alembic.ini current
 ```
 
-当前代码预期 `current` 返回 `0003_demo_redactions (head)`。
+当前代码预期 `current` 返回 `0006_report_version_lineage (head)`。
 
 已有 MVP 1 SQLite 数据库必须先停止后端并备份：
 
@@ -166,7 +166,31 @@ alembic -c alembic.ini current
 
 `stamp` 只登记已有结构，不创建或修改现有表。不要对已有 MVP 1 数据库直接执行 `upgrade 0001_baseline`，否则会尝试重复创建表。
 
-只回滚 0003 脱敏迁移、保留 0002 的 Document 字段与 `fact_sources`：
+只回滚 0006 报告版本谱系字段、保留 0005 分析版本谱系：
+
+```bash
+alembic -c alembic.ini downgrade 0005_analysis_version_lineage
+```
+
+该操作会删除 `cases.report_version`、`cases.report_digest` 和 `ai_outputs.report_version`。只有在应用同步回滚到不依赖报告版本谱系的 0005 兼容版本时才能执行；已有报告输出本身不会被删除。
+
+继续回滚 0005 分析版本谱系字段、保留 0004 工作流版本谱系：
+
+```bash
+alembic -c alembic.ini downgrade 0004_workflow_version_lineage
+```
+
+该操作会删除 `cases.analysis_version` 和 `ai_outputs.analysis_version`。只有在应用同步回滚到不依赖分析版本谱系的 0004 兼容版本时才能执行；已有分析输出本身不会被删除。
+
+继续回滚 0004 工作流版本谱系字段、保留 0003 的脱敏表：
+
+```bash
+alembic -c alembic.ini downgrade 0003_demo_redactions
+```
+
+该操作会删除案件、事实、争点和 AI 输出上的 W1 版本谱系字段。只有在应用同步回滚到不依赖这些字段的 0003 兼容版本时才能执行；downgrade 不会恢复升级前已被回填或覆盖的业务语义。
+
+继续回滚 0003 脱敏迁移、保留 0002 的 Document 字段与 `fact_sources`：
 
 ```bash
 alembic -c alembic.ini downgrade 0002_mvp2_documents_fact_sources
@@ -174,13 +198,13 @@ alembic -c alembic.ini downgrade 0002_mvp2_documents_fact_sources
 
 该操作会删除 `redaction_records`、`redaction_items` 及其中全部脱敏版本数据。只有在确认不需要保留这些数据，并且应用同步回滚到兼容 0002 的版本时才能执行。
 
-从当前 head 同时回滚 0003 和 0002、恢复到 MVP 1 baseline：
+从当前 head 回滚 0006、0005、0004、0003 和 0002，恢复到 MVP 1 baseline：
 
 ```bash
 alembic -c alembic.ini downgrade 0001_baseline
 ```
 
-该操作除删除脱敏表外，还会删除 `fact_sources` 和新增的 Document 字段。只有在确认不需要保留 Sprint 1A 与脱敏数据、已完成备份，并且应用同步回滚到只依赖 MVP 1 schema 的版本时才能执行。
+该操作除删除报告、分析与工作流版本谱系字段和脱敏表外，还会删除 `fact_sources` 和新增的 Document 字段。只有在确认不需要保留 Sprint 1A、脱敏与版本谱系数据、已完成备份，并且应用同步回滚到只依赖 MVP 1 schema 的版本时才能执行。
 
 API 文档：
 

@@ -67,6 +67,38 @@ export type DocumentItem = {
   updated_at: string;
 };
 
+export type RedactionItem = {
+  id: number;
+  redaction_id: number;
+  entity_type: string;
+  start_offset: number;
+  end_offset: number;
+  replacement: string;
+  action: "consistent_alias" | "partial_mask" | "full_replace" | "keep";
+  confidence: number;
+  rule_code: string;
+  review_status: string;
+  original_fingerprint: string;
+  created_at: string;
+  updated_at: string;
+};
+
+export type RedactionRecord = {
+  id: number;
+  case_id: number;
+  document_id: number;
+  source_checksum: string;
+  version: number;
+  status: "detected" | "draft" | "confirmed" | "superseded" | "original_confirmed";
+  redacted_text: string;
+  analysis_mode: "redacted" | "original";
+  confirmed_at: string | null;
+  created_at: string;
+  updated_at: string;
+  source_current: boolean;
+  items: RedactionItem[];
+};
+
 export type Trace = {
   id: number;
   case_id: number;

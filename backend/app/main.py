@@ -3,13 +3,15 @@ from __future__ import annotations
 import json
 import os
 import re
-import shutil
+import hashlib
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
+from typing import Annotated, Optional
+from urllib.parse import quote
 
-from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from sqlalchemy import inspect, text
 from sqlalchemy.orm import Session
 
@@ -26,13 +28,35 @@ from .agents.research_agent import generate_analysis
 from .agents.risk_agent import generate_risk
 from .agents.similarity_search import recommend_memories
 from .database import Base, SessionLocal, engine, get_db
+from .services.document_files import PreparedUpload, prepare_upload
+from .services.redaction import RedactionCandidate, RedactionService
+from .services.storage import (
+    StorageError,
+    StorageService,
+    build_object_key,
+    get_storage_service,
+)
+from .services.workflow import (
+    compare_and_log_workflow_states,
+    compute_legacy_workflow_state,
+    compute_workflow_state,
+)
+from .services.versioning import (
+    CaseNotFoundError,
+    ConcurrentVersionUpdateError,
+    advance_material_version,
+    compute_analysis_digest,
+    publish_analysis_version,
+    publish_fact_version,
+    publish_issue_version,
+    publish_report_version,
+)
+from .services.versioning.common import lock_case
 from .utils import from_json, join_tags, log_event, split_tags, to_json
 
 
 APP_DIR = Path(__file__).resolve().parent
-UPLOAD_DIR = Path(os.getenv("UPLOAD_DIR", str(APP_DIR / "uploads")))
 MOCK_DIR = APP_DIR / "mock"
-UPLOAD_DIR.mkdir(exist_ok=True)
 
 app = FastAPI(title="LexFlow MVP API", version="0.1.0")
 
@@ -57,12 +81,22 @@ app.add_middleware(
 
 @app.on_event("startup")
 def startup() -> None:
-    Base.metadata.create_all(bind=engine)
-    ensure_existing_schema()
+    # Temporary compatibility bridge. Alembic owns all Sprint 1A additions;
+    # create_all and the legacy ALTER helper will be removed after two stable
+    # production migration cycles.
+    # Keep automatic schema bootstrapping only for local SQLite development.
+    # PostgreSQL must be migrated before the application starts; otherwise
+    # create_all could create fact_sources ahead of revision 0002 and make the
+    # audited migration fail with an "already exists" conflict.
+    if engine.dialect.name == "sqlite":
+        Base.metadata.create_all(bind=engine)
+        ensure_existing_schema()
     seed_demo_data()
 
 
 def ensure_existing_schema() -> None:
+    # Do not add Alembic-managed Document or FactSource fields here. Existing
+    # deployments must stamp 0001_baseline and upgrade to head before startup.
     additions = {
         "cases": {
             "case_no": "TEXT NOT NULL DEFAULT ''",
@@ -75,6 +109,9 @@ def ensure_existing_schema() -> None:
             "workflow_mode": "TEXT NOT NULL DEFAULT 'standard'",
             "fact_version": "INTEGER NOT NULL DEFAULT 1",
             "issue_version": "INTEGER NOT NULL DEFAULT 1",
+            "analysis_version": "INTEGER NOT NULL DEFAULT 0",
+            "report_version": "INTEGER NOT NULL DEFAULT 0",
+            "report_digest": "TEXT",
         },
         "ai_outputs": {
             "work_unit_id": "INTEGER",
@@ -82,6 +119,8 @@ def ensure_existing_schema() -> None:
             "version": "INTEGER NOT NULL DEFAULT 1",
             "fact_version": "INTEGER NOT NULL DEFAULT 1",
             "issue_version": "INTEGER NOT NULL DEFAULT 1",
+            "analysis_version": "INTEGER NOT NULL DEFAULT 0",
+            "report_version": "INTEGER NOT NULL DEFAULT 0",
             "input_snapshot_json": "TEXT NOT NULL DEFAULT '{}'",
         },
         "decision_traces": {
@@ -141,8 +180,11 @@ def seed_demo_data() -> None:
             document = models.Document(
                 case_id=case.id,
                 filename="sample_case.txt",
+                original_filename="sample_case.txt",
                 file_type="txt",
+                mime_type="text/plain",
                 raw_text=sample_text,
+                processing_status="ready",
                 parsed_json=to_json({
                     "file_name": "sample_case.txt",
                     "file_type": "txt",
@@ -215,7 +257,319 @@ def serialize_document(document: models.Document) -> dict:
         "raw_text": document.raw_text,
         "parsed_json": from_json(document.parsed_json, {}),
         "uploaded_at": document.uploaded_at,
+        "original_filename": document.original_filename,
+        "mime_type": document.mime_type,
+        "file_size": document.file_size,
+        "checksum": document.checksum,
+        "storage_provider": document.storage_provider,
+        "storage_key": document.storage_key,
+        "processing_status": document.processing_status,
+        "extraction_error": document.extraction_error,
+        "updated_at": document.updated_at or document.uploaded_at,
     }
+
+
+def document_text_checksum(document: models.Document) -> str:
+    """Fingerprint the parsed source text shown to a human reviewer.
+
+    The upload checksum describes the binary object and can stay unchanged when
+    parsing is corrected. A redaction record must instead become stale whenever
+    the user-visible text changes.
+    """
+    return hashlib.sha256((document.raw_text or "").encode("utf-8")).hexdigest()
+
+
+def serialize_redaction_item(item: models.RedactionItem) -> dict:
+    return {
+        "id": item.id,
+        "redaction_id": item.redaction_id,
+        "entity_type": item.entity_type,
+        "start_offset": item.start_offset,
+        "end_offset": item.end_offset,
+        "replacement": item.replacement,
+        "action": item.action,
+        "confidence": float(item.confidence or 0),
+        "rule_code": item.rule_code,
+        "review_status": item.review_status,
+        "original_fingerprint": item.original_fingerprint,
+        "created_at": item.created_at,
+        "updated_at": item.updated_at,
+    }
+
+
+def serialize_redaction(record: models.RedactionRecord) -> dict:
+    source_current = document_text_checksum(record.document) == record.source_checksum
+    return {
+        "id": record.id,
+        "case_id": record.case_id,
+        "document_id": record.document_id,
+        "source_checksum": record.source_checksum,
+        "version": record.version,
+        "status": record.status,
+        "redacted_text": record.redacted_text,
+        "analysis_mode": record.analysis_mode,
+        "confirmed_at": record.confirmed_at,
+        "created_at": record.created_at,
+        "updated_at": record.updated_at,
+        "source_current": source_current,
+        "items": [serialize_redaction_item(item) for item in sorted(record.items, key=lambda value: (value.start_offset, value.id))],
+    }
+
+
+def require_redaction(db: Session, redaction_id: int) -> models.RedactionRecord:
+    record = db.query(models.RedactionRecord).filter(models.RedactionRecord.id == redaction_id).first()
+    if not record:
+        raise HTTPException(status_code=404, detail="未找到脱敏版本")
+    return record
+
+
+def redaction_candidates(items: list[models.RedactionItem]) -> list[RedactionCandidate]:
+    return [
+        RedactionCandidate(
+            entity_type=item.entity_type,
+            start_offset=item.start_offset,
+            end_offset=item.end_offset,
+            replacement=item.replacement,
+            action=item.action,
+            confidence=float(item.confidence or 0),
+            rule_code=item.rule_code,
+            original_fingerprint=item.original_fingerprint,
+        )
+        for item in items
+    ]
+
+
+def refresh_redaction_preview(record: models.RedactionRecord) -> None:
+    service = RedactionService()
+    try:
+        record.redacted_text = service.build_preview(record.document.raw_text or "", redaction_candidates(record.items))
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    record.updated_at = datetime.utcnow()
+
+
+def case_subject_aliases(db: Session, case_id: int) -> dict[str, str]:
+    """Reuse confirmed aliases within one case without reading sensitive values."""
+    items = (
+        db.query(models.RedactionItem)
+        .join(models.RedactionRecord)
+        .filter(
+            models.RedactionRecord.case_id == case_id,
+            models.RedactionItem.action == "consistent_alias",
+            models.RedactionItem.review_status.notin_(["已驳回", "已移除", "已保留"]),
+        )
+        .all()
+    )
+    return {item.original_fingerprint: item.replacement for item in items if item.replacement}
+
+
+def create_redaction_record(
+    db: Session,
+    case: models.Case,
+    document: models.Document,
+    *,
+    force: bool = False,
+) -> models.RedactionRecord:
+    if not (document.raw_text or "").strip():
+        raise HTTPException(status_code=422, detail="该材料尚无可用于脱敏预览的解析文本")
+    source_checksum = document_text_checksum(document)
+    records = (
+        db.query(models.RedactionRecord)
+        .filter(models.RedactionRecord.case_id == case.id, models.RedactionRecord.document_id == document.id)
+        .order_by(models.RedactionRecord.version.desc())
+        .all()
+    )
+    for previous in records:
+        if previous.source_checksum != source_checksum and previous.status != "superseded":
+            previous.status = "superseded"
+            previous.updated_at = datetime.utcnow()
+    current = next((item for item in records if item.source_checksum == source_checksum and item.status != "superseded"), None)
+    if current and not force:
+        return current
+    if current:
+        current.status = "superseded"
+        current.updated_at = datetime.utcnow()
+    next_version = max((item.version for item in records), default=0) + 1
+    service = RedactionService()
+    subject_names = [case.claimant, case.employer]
+    candidates = service.detect(
+        document.raw_text or "",
+        subject_names=subject_names,
+        aliases=case_subject_aliases(db, case.id),
+    )
+    record = models.RedactionRecord(
+        case_id=case.id,
+        document_id=document.id,
+        source_checksum=source_checksum,
+        version=next_version,
+        status="detected",
+        analysis_mode="redacted",
+    )
+    db.add(record)
+    db.flush()
+    for candidate in candidates:
+        db.add(
+            models.RedactionItem(
+                redaction_id=record.id,
+                entity_type=candidate.entity_type,
+                start_offset=candidate.start_offset,
+                end_offset=candidate.end_offset,
+                replacement=candidate.replacement,
+                action=candidate.action,
+                confidence=candidate.confidence,
+                rule_code=candidate.rule_code,
+                review_status="待确认",
+                original_fingerprint=candidate.original_fingerprint,
+            )
+        )
+    db.flush()
+    refresh_redaction_preview(record)
+    return record
+
+
+def _save_upload_failure_document(
+    db: Session,
+    case_id: int,
+    prepared: PreparedUpload,
+    storage_provider: str,
+    message: str,
+) -> models.Document:
+    document = models.Document(
+        case_id=case_id,
+        filename=prepared.safe_filename,
+        original_filename=prepared.original_filename,
+        file_type=prepared.file_type,
+        mime_type=prepared.mime_type,
+        file_size=prepared.file_size,
+        checksum=prepared.checksum,
+        storage_provider=storage_provider,
+        processing_status="upload_failed",
+        raw_text="",
+        parsed_json="{}",
+        updated_at=datetime.utcnow(),
+    )
+    document.extraction_error = message[:1000]
+    db.add(document)
+    db.commit()
+    db.refresh(document)
+    return document
+
+
+def persist_prepared_document(
+    db: Session,
+    case_id: int,
+    prepared: PreparedUpload,
+    storage: Optional[StorageService] = None,
+    operation_id: Optional[str] = None,
+) -> models.Document:
+    storage = storage or get_storage_service()
+    duplicate = db.query(models.Document).filter(
+        models.Document.case_id == case_id,
+        models.Document.checksum == prepared.checksum,
+        models.Document.processing_status != "upload_failed",
+    ).first()
+    if duplicate:
+        prepared.close()
+        raise HTTPException(
+            status_code=409,
+            detail=f"同一案件已上传相同文件：{duplicate.original_filename or duplicate.filename}",
+        )
+
+    document = models.Document(
+        case_id=case_id,
+        filename=prepared.safe_filename,
+        original_filename=prepared.original_filename,
+        file_type=prepared.file_type,
+        mime_type=prepared.mime_type,
+        file_size=prepared.file_size,
+        checksum=prepared.checksum,
+        storage_provider=storage.provider_name,
+        processing_status="uploaded",
+        raw_text="",
+        parsed_json="{}",
+        updated_at=datetime.utcnow(),
+    )
+    db.add(document)
+    try:
+        db.flush()
+    except Exception as exc:
+        db.rollback()
+        prepared.close()
+        raise HTTPException(status_code=500, detail="材料记录创建失败，未上传原始文件") from exc
+
+    key = build_object_key(case_id, document.id, prepared.checksum, prepared.safe_filename)
+    try:
+        storage.put(key, prepared.stream, prepared.mime_type)
+    except StorageError as exc:
+        # A provider may finish writing and then fail while acknowledging the
+        # upload. Deleting an absent key is safe for supported backends, so
+        # always attempt compensation instead of relying on the local flag.
+        try:
+            storage.delete(key)
+        except StorageError:
+            pass
+        db.rollback()
+        _save_upload_failure_document(db, case_id, prepared, storage.provider_name, str(exc))
+        prepared.close()
+        raise HTTPException(status_code=502, detail="原始文件上传失败，材料记录已保留以便重试") from exc
+
+    document.storage_key = key
+    document.processing_status = "parsing"
+    document.extraction_error = ""
+    document.updated_at = datetime.utcnow()
+    temporary: Optional[Path] = None
+    try:
+        temporary = storage.download_to_temp(key, suffix=f".{prepared.file_type}")
+        parsed = parse_document(temporary)
+        document.raw_text = parsed["raw_text"]
+        document.parsed_json = to_json(parsed["parsed_json"])
+        document.processing_status = "ready"
+        document.extraction_error = ""
+        document.updated_at = datetime.utcnow()
+    except Exception as exc:
+        document.processing_status = "parse_failed"
+        document.extraction_error = f"文件解析失败：{exc}"[:1000]
+        document.updated_at = datetime.utcnow()
+
+    try:
+        db.flush()
+        advance_material_version(
+            db,
+            case_id,
+            reason="新增并解析案件材料",
+            source="document_upload",
+            operation_id=operation_id,
+        )
+        db.commit()
+        db.refresh(document)
+    except Exception as exc:
+        db.rollback()
+        try:
+            storage.delete(key)
+        except StorageError:
+            pass
+        raise HTTPException(status_code=500, detail="材料事务保存失败，已回滚数据库并清理上传对象") from exc
+    finally:
+        prepared.close()
+        if temporary:
+            temporary.unlink(missing_ok=True)
+    return document
+
+
+def persist_upload(
+    db: Session,
+    case_id: int,
+    upload: UploadFile,
+    storage: Optional[StorageService] = None,
+    operation_id: Optional[str] = None,
+) -> models.Document:
+    return persist_prepared_document(
+        db,
+        case_id,
+        prepare_upload(upload),
+        storage,
+        operation_id=operation_id,
+    )
 
 
 def serialize_output(output: models.AIOutput, db: Optional[Session] = None) -> dict:
@@ -431,36 +785,6 @@ def mark_work_unit_failed(db: Session, case: models.Case, unit: models.WorkUnit,
     return unit
 
 
-def invalidate_analysis_units(db: Session, case: models.Case) -> None:
-    db.query(models.WorkUnit).filter(
-        models.WorkUnit.case_id == case.id,
-        models.WorkUnit.code.like("legal_analysis:%"),
-        models.WorkUnit.status.in_(["待处理", "待人工复核", "已批准"]),
-    ).update({"status": "需重新分析"}, synchronize_session=False)
-
-
-def advance_fact_version(db: Session, case: models.Case) -> int:
-    old_version = case.fact_version
-    case.fact_version += 1
-    db.query(models.CaseFact).filter(
-        models.CaseFact.case_id == case.id,
-        models.CaseFact.fact_version == old_version,
-    ).update({"fact_version": case.fact_version}, synchronize_session=False)
-    invalidate_analysis_units(db, case)
-    return case.fact_version
-
-
-def advance_issue_version(db: Session, case: models.Case) -> int:
-    old_version = case.issue_version
-    case.issue_version += 1
-    db.query(models.CaseIssue).filter(
-        models.CaseIssue.case_id == case.id,
-        models.CaseIssue.issue_version == old_version,
-    ).update({"issue_version": case.issue_version}, synchronize_session=False)
-    invalidate_analysis_units(db, case)
-    return case.issue_version
-
-
 def facts_are_confirmed(db: Session, case: models.Case) -> bool:
     facts = current_facts(db, case)
     return bool(facts) and all(item.status in {"已确认", "已驳回"} for item in facts) and any(
@@ -476,7 +800,12 @@ def issues_are_confirmed(db: Session, case: models.Case) -> bool:
     )
 
 
-def current_analysis_outputs(db: Session, case: models.Case) -> list[models.AIOutput]:
+def current_analysis_outputs(
+    db: Session,
+    case: models.Case,
+    *,
+    analysis_version: Optional[int] = None,
+) -> list[models.AIOutput]:
     """Return the latest current-version legal analysis for each confirmed issue."""
     issue_ids = {
         item.id for item in current_issues(db, case)
@@ -492,12 +821,18 @@ def current_analysis_outputs(db: Session, case: models.Case) -> list[models.AIOu
     for unit in units:
         if unit.parent_issue_id not in issue_ids:
             continue
-        output = db.query(models.AIOutput).filter(
+        query = db.query(models.AIOutput).filter(
             models.AIOutput.work_unit_id == unit.id,
             models.AIOutput.output_type == "legal_analysis",
             models.AIOutput.fact_version == case.fact_version,
             models.AIOutput.issue_version == case.issue_version,
-        ).order_by(models.AIOutput.version.desc()).first()
+        )
+        if analysis_version is not None:
+            query = query.filter(
+                models.AIOutput.material_version == case.material_version,
+                models.AIOutput.analysis_version == analysis_version,
+            )
+        output = query.order_by(models.AIOutput.version.desc()).first()
         if output:
             outputs.append(output)
     return outputs
@@ -606,9 +941,6 @@ def reconcile_ai_case_workflow(db: Session, case: models.Case) -> dict:
 
 
 def run_ai_fact_extraction(db: Session, case: models.Case, unit: models.WorkUnit) -> models.WorkUnit:
-    existing = current_facts(db, case)
-    if existing:
-        case.fact_version += 1
     try:
         result = fact_extraction(case, case_material_text(db, case))
     except StructuredOutputError as error:
@@ -628,6 +960,7 @@ def run_ai_fact_extraction(db: Session, case: models.Case, unit: models.WorkUnit
             ai_fact=item.get("content") or "",
             source_document=item.get("source") or source_name,
             confidence=item.get("confidence") or result.get("fact_confidence") or "中",
+            material_version=case.material_version,
             fact_version=case.fact_version,
         ))
     for item in result.get("pending_facts", []):
@@ -638,6 +971,7 @@ def run_ai_fact_extraction(db: Session, case: models.Case, unit: models.WorkUnit
             ai_fact=item,
             source_document=source_name,
             confidence="待核验",
+            material_version=case.material_version,
             fact_version=case.fact_version,
         ))
     db.flush()
@@ -650,6 +984,7 @@ def run_ai_fact_extraction(db: Session, case: models.Case, unit: models.WorkUnit
         meta_json=to_json({"structured": result, "llm": result.get("_llm", {})}),
         review_status="待复核",
         version=next_output_version(db, unit),
+        material_version=case.material_version,
         fact_version=case.fact_version,
         issue_version=case.issue_version,
         input_snapshot_json=to_json({"material": case_material_text(db, case)[:12000]}),
@@ -667,8 +1002,6 @@ def run_ai_fact_extraction(db: Session, case: models.Case, unit: models.WorkUnit
 def run_ai_issue_identification(db: Session, case: models.Case, unit: models.WorkUnit) -> models.WorkUnit:
     if not facts_are_confirmed(db, case):
         raise HTTPException(status_code=400, detail="请先确认或驳回全部事实，再进入争点识别")
-    if current_issues(db, case):
-        case.issue_version += 1
     facts = current_facts(db, case)
     try:
         result = issue_identification(case, facts)
@@ -694,6 +1027,7 @@ def run_ai_issue_identification(db: Session, case: models.Case, unit: models.Wor
             importance=item.get("importance") or "中",
             related_facts=to_json([]),
             related_fact_ids=to_json(item.get("related_fact_ids") or []),
+            fact_version=case.fact_version,
             issue_version=case.issue_version,
         ))
     db.flush()
@@ -706,6 +1040,7 @@ def run_ai_issue_identification(db: Session, case: models.Case, unit: models.Wor
         meta_json=to_json({"structured": result, "llm": result.get("_llm", {})}),
         review_status="待复核",
         version=next_output_version(db, unit),
+        material_version=case.material_version,
         fact_version=case.fact_version,
         issue_version=case.issue_version,
         input_snapshot_json=to_json({"fact_version": case.fact_version, "facts": [serialize_fact(item) for item in facts]}),
@@ -791,6 +1126,7 @@ def run_ai_legal_analysis(db: Session, case: models.Case, unit: models.WorkUnit,
         meta_json=to_json({"structured": result, "llm": result.get("_llm", {}), "legal_memory_matches": memory_context}),
         review_status="待复核",
         version=next_output_version(db, unit),
+        material_version=case.material_version,
         fact_version=case.fact_version,
         issue_version=case.issue_version,
         input_snapshot_json=to_json(snapshot),
@@ -814,13 +1150,19 @@ def reviewed_output_content(db: Session, output: models.AIOutput) -> str:
 
 def generate_legal_report(db: Session, case: models.Case) -> models.AIOutput:
     reconcile_ai_case_workflow(db, case)
+    if case.analysis_version <= 0:
+        raise HTTPException(status_code=409, detail="请先正式发布当前法律分析集")
     facts = [item for item in current_facts(db, case) if item.status == "已确认"]
     issues = [
         item for item in current_issues(db, case)
         if item.status in {"人工确认", "分析中", "已完成"}
     ]
     analyses = [
-        item for item in current_analysis_outputs(db, case)
+        item for item in current_analysis_outputs(
+            db,
+            case,
+            analysis_version=case.analysis_version,
+        )
         if item.review_status in {"已接受", "已修改"}
     ]
     if not facts or not issues or not analyses:
@@ -834,6 +1176,8 @@ def generate_legal_report(db: Session, case: models.Case) -> models.AIOutput:
             sections.append({"issue": serialize_issue(issue), "analysis": reviewed_output_content(db, output), "analysis_version": output.version})
     if not sections:
         raise HTTPException(status_code=400, detail="尚无与当前确认争点对应的已批准分析")
+    analysis_ids = sorted(item.id for item in analyses)
+    analysis_digest = compute_analysis_digest(db, case.id, analysis_ids)
     report = {
         "case_summary": case.summary,
         "fact_framework": [item.human_fact or item.ai_fact for item in facts],
@@ -877,9 +1221,18 @@ def generate_legal_report(db: Session, case: models.Case) -> models.AIOutput:
         meta_json=to_json({"structured": report}),
         review_status="已接受",
         version=next_output_version(db, report_unit),
+        material_version=case.material_version,
         fact_version=case.fact_version,
         issue_version=case.issue_version,
-        input_snapshot_json=to_json({"fact_version": case.fact_version, "issue_version": case.issue_version, "analysis_ids": [item.id for item in analyses]}),
+        analysis_version=case.analysis_version,
+        report_version=0,
+        input_snapshot_json=to_json({
+            "fact_version": case.fact_version,
+            "issue_version": case.issue_version,
+            "analysis_version": case.analysis_version,
+            "analysis_digest": analysis_digest,
+            "analysis_ids": analysis_ids,
+        }),
     )
     db.add(output)
     db.flush()
@@ -995,6 +1348,24 @@ def create_ai_case(
 ):
     if not fact_text.strip() and not files:
         raise HTTPException(status_code=400, detail="请粘贴案件事实或至少上传一份材料")
+    prepared_files: list[PreparedUpload] = []
+    try:
+        for file in files:
+            prepared_files.append(prepare_upload(file))
+        checksums = [item.checksum for item in prepared_files]
+        if len(checksums) != len(set(checksums)):
+            raise HTTPException(status_code=409, detail="本次选择中包含内容相同的重复文件")
+    except Exception:
+        for prepared in prepared_files:
+            prepared.close()
+        raise
+    try:
+        storage = get_storage_service()
+    except StorageError:
+        for prepared in prepared_files:
+            prepared.close()
+        raise HTTPException(status_code=503, detail="文件存储服务配置不完整")
+
     case = models.Case(
         title=title.strip(),
         claimant=claimant.strip() or "待识别",
@@ -1008,32 +1379,61 @@ def create_ai_case(
         workflow_mode="ai_case",
     )
     db.add(case)
-    db.commit()
-    db.refresh(case)
+    try:
+        db.commit()
+        db.refresh(case)
+    except Exception:
+        db.rollback()
+        for prepared in prepared_files:
+            prepared.close()
+        raise
     if fact_text.strip():
+        inline_bytes = fact_text.strip().encode("utf-8")
         db.add(models.Document(
             case_id=case.id,
             filename="现场输入案件事实.txt",
+            original_filename="现场输入案件事实.txt",
             file_type="txt",
+            mime_type="text/plain",
+            file_size=len(inline_bytes),
+            checksum=hashlib.sha256(inline_bytes).hexdigest(),
+            storage_provider="inline_text",
             raw_text=fact_text.strip(),
+            processing_status="ready",
             parsed_json=to_json({"file_name": "现场输入案件事实.txt", "source": "现场粘贴"}),
         ))
-    case_dir = UPLOAD_DIR / str(case.id)
-    case_dir.mkdir(exist_ok=True)
-    for file in files:
-        safe_name = Path(file.filename or "案件材料").name
-        target = case_dir / safe_name
-        with target.open("wb") as buffer:
-            shutil.copyfileobj(file.file, buffer)
-        parsed = parse_document(target)
-        db.add(models.Document(
-            case_id=case.id,
-            filename=safe_name,
-            file_type=target.suffix.replace(".", "") or "unknown",
-            raw_text=parsed["raw_text"],
-            parsed_json=to_json(parsed["parsed_json"]),
-        ))
-    db.commit()
+        try:
+            db.flush()
+            advance_material_version(
+                db,
+                case.id,
+                reason="新建 AI 案件时录入现场事实",
+                source="ai_case_inline_text",
+            )
+            db.commit()
+        except Exception:
+            db.rollback()
+            for prepared in prepared_files:
+                prepared.close()
+            raise
+    for prepared in prepared_files:
+        try:
+            document = persist_prepared_document(db, case.id, prepared, storage)
+            log_event(
+                db,
+                case.id,
+                "document_uploaded",
+                f"已持久保存材料：{document.original_filename}",
+                {"document_id": document.id, "processing_status": document.processing_status},
+            )
+        except HTTPException as exc:
+            log_event(
+                db,
+                case.id,
+                "document_upload_failed",
+                "一份案件材料未能完成持久化",
+                {"status_code": exc.status_code},
+            )
     unit = ensure_ai_case_workflow(db, case)[0]
     run_ai_fact_extraction(db, case, unit)
     db.commit()
@@ -1059,40 +1459,41 @@ def get_case(case_id: int, db: Session = Depends(get_db)):
     }
 
 
-@app.get("/cases/{case_id}/workspace")
+@app.get("/cases/{case_id}/workspace", response_model=schemas.WorkspaceSchema)
 def get_workspace(case_id: int, db: Session = Depends(get_db)):
-    case = require_case(db, case_id)
-    ensure_case_workflow(db, case)
-    workflow_state = reconcile_ai_case_workflow(db, case)
-    db.commit()
-    outputs = db.query(models.AIOutput).filter(
-        models.AIOutput.case_id == case_id
-    ).order_by(models.AIOutput.created_at.desc()).all()
-    work_units = db.query(models.WorkUnit).filter(
-        models.WorkUnit.case_id == case_id
-    ).order_by(models.WorkUnit.sequence).all()
-    facts = current_facts(db, case)
-    issues = current_issues(db, case)
-    traces = db.query(models.DecisionTrace).filter(
-        models.DecisionTrace.case_id == case_id
-    ).order_by(models.DecisionTrace.created_at.desc()).all()
-    candidates = []
-    if work_units:
-        candidates = db.query(models.LegalMemory).filter(
-            models.LegalMemory.source_work_unit_id.in_([item.id for item in work_units])
-        ).order_by(models.LegalMemory.created_at.desc()).all()
-    return {
-        "case": schemas.CaseOut.model_validate(case).model_dump(mode="json"),
-        "documents": [serialize_document(item) for item in case.documents],
-        "evidences": [schemas.EvidenceOut.model_validate(item).model_dump(mode="json") for item in case.evidences],
-        "work_units": [serialize_work_unit(item) for item in work_units],
-        "facts": [serialize_fact(item) for item in facts],
-        "issues": [serialize_issue(item) for item in issues],
-        "ai_outputs": [serialize_output(item, db) for item in outputs],
-        "traces": [serialize_trace(item) for item in traces],
-        "memory_candidates": [serialize_memory(item) for item in candidates],
-        "workflow_state": workflow_state,
-    }
+    with db.no_autoflush:
+        case = require_case(db, case_id)
+        workflow_state = compute_workflow_state(db, case)
+        old_state = compute_legacy_workflow_state(db, case)
+        compare_and_log_workflow_states(case.id, old_state, workflow_state)
+        outputs = db.query(models.AIOutput).filter(
+            models.AIOutput.case_id == case_id
+        ).order_by(models.AIOutput.created_at.desc()).all()
+        work_units = db.query(models.WorkUnit).filter(
+            models.WorkUnit.case_id == case_id
+        ).order_by(models.WorkUnit.sequence).all()
+        facts = current_facts(db, case)
+        issues = current_issues(db, case)
+        traces = db.query(models.DecisionTrace).filter(
+            models.DecisionTrace.case_id == case_id
+        ).order_by(models.DecisionTrace.created_at.desc()).all()
+        candidates = []
+        if work_units:
+            candidates = db.query(models.LegalMemory).filter(
+                models.LegalMemory.source_work_unit_id.in_([item.id for item in work_units])
+            ).order_by(models.LegalMemory.created_at.desc()).all()
+        return schemas.WorkspaceSchema(
+            case=schemas.CaseOut.model_validate(case),
+            documents=[serialize_document(item) for item in case.documents],
+            evidences=[schemas.EvidenceOut.model_validate(item) for item in case.evidences],
+            work_units=[serialize_work_unit(item) for item in work_units],
+            facts=[serialize_fact(item) for item in facts],
+            issues=[serialize_issue(item) for item in issues],
+            ai_outputs=[serialize_output(item, db) for item in outputs],
+            traces=[serialize_trace(item) for item in traces],
+            memory_candidates=[serialize_memory(item) for item in candidates],
+            workflow_state=workflow_state,
+        )
 
 
 def require_work_unit(db: Session, case_id: int, work_unit_id: int) -> models.WorkUnit:
@@ -1199,12 +1600,12 @@ def execute_work_unit(db: Session, case: models.Case, unit: models.WorkUnit) -> 
 
 @app.get("/cases/{case_id}/work-units", response_model=list[schemas.WorkUnitOut])
 def list_work_units(case_id: int, db: Session = Depends(get_db)):
-    case = require_case(db, case_id)
-    ensure_case_workflow(db, case)
-    reconcile_ai_case_workflow(db, case)
-    db.commit()
-    items = db.query(models.WorkUnit).filter(models.WorkUnit.case_id == case_id).order_by(models.WorkUnit.sequence).all()
-    return [serialize_work_unit(item) for item in items]
+    with db.no_autoflush:
+        require_case(db, case_id)
+        items = db.query(models.WorkUnit).filter(
+            models.WorkUnit.case_id == case_id
+        ).order_by(models.WorkUnit.sequence).all()
+        return [serialize_work_unit(item) for item in items]
 
 
 @app.get("/work-units/{work_unit_id}", response_model=schemas.WorkUnitOut)
@@ -1304,9 +1705,6 @@ def review_fact(fact_id: int, payload: schemas.FactReview, db: Session = Depends
             raise HTTPException(status_code=400, detail="修改事实时需要填写人工版本")
     elif payload.action == "接受":
         fact.human_fact = fact.ai_fact
-    if case.workflow_mode == "ai_case":
-        advance_fact_version(db, case)
-        fact.fact_version = case.fact_version
     record_human_trace(
         db,
         case_id=fact.case_id,
@@ -1335,12 +1733,9 @@ def confirm_all_facts(case_id: int, payload: schemas.BatchReview, db: Session = 
         reconcile_ai_case_workflow(db, case)
         db.commit()
         return [serialize_fact(item) for item in current_facts(db, case)]
-    if case.workflow_mode == "ai_case":
-        advance_fact_version(db, case)
     for fact in facts:
         fact.status = "已确认"
         fact.human_fact = fact.ai_fact
-        fact.fact_version = case.fact_version
         record_human_trace(
             db,
             case_id=case.id,
@@ -1358,6 +1753,119 @@ def confirm_all_facts(case_id: int, payload: schemas.BatchReview, db: Session = 
     reconcile_ai_case_workflow(db, case)
     db.commit()
     return [serialize_fact(item) for item in current_facts(db, case)]
+
+
+FACT_VERSION_PUBLISHED_EVENT = "FACT_VERSION_PUBLISHED"
+
+
+def find_fact_publish_event(
+    db: Session,
+    case_id: int,
+    operation_id: str,
+) -> tuple[models.WorkflowEvent, dict] | None:
+    events = db.query(models.WorkflowEvent).filter(
+        models.WorkflowEvent.case_id == case_id,
+        models.WorkflowEvent.event_type == FACT_VERSION_PUBLISHED_EVENT,
+    ).order_by(models.WorkflowEvent.id.desc()).all()
+    for event in events:
+        payload = from_json(event.payload_json, {})
+        if payload.get("operation_id") == operation_id:
+            return event, payload
+    return None
+
+
+def fact_publish_response(
+    case_id: int,
+    payload: dict,
+    *,
+    replayed: bool,
+) -> schemas.FactPublishOut:
+    return schemas.FactPublishOut(
+        case_id=case_id,
+        old_version=int(payload["old_version"]),
+        new_version=int(payload["new_version"]),
+        material_version=int(payload["material_version"]),
+        fact_ids=[int(fact_id) for fact_id in payload.get("fact_ids", [])],
+        replayed=replayed,
+    )
+
+
+@app.post("/cases/{case_id}/facts/publish", response_model=schemas.FactPublishOut)
+def publish_facts(
+    case_id: int,
+    payload: schemas.FactPublishRequest,
+    db: Session = Depends(get_db),
+    idempotency_key: Annotated[
+        Optional[str],
+        Header(alias="Idempotency-Key"),
+    ] = None,
+):
+    operation_id = payload.operation_id.strip()
+    reason = payload.reason.strip()
+    if not operation_id or not reason:
+        raise HTTPException(status_code=422, detail="operation_id 和 reason 不能为空")
+    if idempotency_key is not None and idempotency_key.strip() != operation_id:
+        raise HTTPException(status_code=409, detail="Idempotency-Key 与 operation_id 不一致")
+
+    try:
+        case = lock_case(db, case_id)
+        replay = find_fact_publish_event(db, case.id, operation_id)
+        if replay:
+            _, event_payload = replay
+            return fact_publish_response(case.id, event_payload, replayed=True)
+
+        facts = db.query(models.CaseFact).filter(
+            models.CaseFact.case_id == case.id,
+            models.CaseFact.fact_version == case.fact_version,
+        ).order_by(models.CaseFact.id).all()
+        if not facts:
+            raise HTTPException(status_code=400, detail="当前事实集为空，无法发布")
+        pending_ids = [fact.id for fact in facts if fact.status not in {"已确认", "已驳回"}]
+        if pending_ids:
+            raise HTTPException(
+                status_code=409,
+                detail={"message": "事实集仍有待复核项，无法发布", "fact_ids": pending_ids},
+            )
+        confirmed_ids = [fact.id for fact in facts if fact.status == "已确认"]
+        if not confirmed_ids:
+            raise HTTPException(status_code=409, detail="事实集没有已确认事实，无法发布")
+
+        result = publish_fact_version(db, case.id)
+        fact_ids = [fact.id for fact in facts]
+        for fact in facts:
+            fact.fact_version = result.new_version
+            fact.material_version = case.material_version
+
+        event_payload = {
+            "old_version": result.old_version,
+            "new_version": result.new_version,
+            "material_version": case.material_version,
+            "fact_ids": fact_ids,
+            "reason": reason,
+            "source": "facts_publish",
+            "operation_id": operation_id,
+        }
+        db.add(models.WorkflowEvent(
+            case_id=case.id,
+            event_type=FACT_VERSION_PUBLISHED_EVENT,
+            message=f"事实版本已从 V{result.old_version} 发布至 V{result.new_version}",
+            payload_json=to_json(event_payload),
+        ))
+        db.flush()
+        db.commit()
+        return fact_publish_response(case.id, event_payload, replayed=False)
+    except HTTPException:
+        db.rollback()
+        raise
+    except CaseNotFoundError as error:
+        db.rollback()
+        raise HTTPException(status_code=404, detail="未找到案件") from error
+    except ConcurrentVersionUpdateError as error:
+        db.rollback()
+        raise HTTPException(status_code=409, detail=str(error)) from error
+    except Exception:
+        db.rollback()
+        raise
 
 
 @app.get("/cases/{case_id}/issues", response_model=list[schemas.IssueOut])
@@ -1387,11 +1895,9 @@ def add_issue(case_id: int, payload: schemas.IssueCreate, db: Session = Depends(
         importance=payload.importance,
         related_facts=to_json(payload.related_facts),
         related_fact_ids=to_json(validate_related_fact_ids(case, payload.related_fact_ids, db)),
+        fact_version=case.fact_version,
         issue_version=case.issue_version,
     )
-    if case.workflow_mode == "ai_case":
-        advance_issue_version(db, case)
-        issue.issue_version = case.issue_version
     db.add(issue)
     db.flush()
     record_human_trace(
@@ -1429,9 +1935,6 @@ def update_issue(issue_id: int, payload: schemas.IssueUpdate, db: Session = Depe
     issue.importance = payload.importance
     issue.related_facts = to_json(payload.related_facts)
     issue.related_fact_ids = to_json(validate_related_fact_ids(case, payload.related_fact_ids, db))
-    if case.workflow_mode == "ai_case":
-        advance_issue_version(db, case)
-        issue.issue_version = case.issue_version
     record_human_trace(
         db,
         case_id=issue.case_id,
@@ -1471,11 +1974,7 @@ def issue_action(issue_id: int, payload: schemas.IssueAction, db: Session = Depe
             reconcile_ai_case_workflow(db, case)
             db.commit()
         return serialize_issue(issue)
-    previous_status = issue.status
     issue.status = target_status
-    if case.workflow_mode == "ai_case" and payload.action == "确认" and previous_status != "人工确认":
-        advance_issue_version(db, case)
-        issue.issue_version = case.issue_version
     record_human_trace(
         db,
         case_id=issue.case_id,
@@ -1509,11 +2008,8 @@ def confirm_all_issues(case_id: int, payload: schemas.BatchReview, db: Session =
             reconcile_ai_case_workflow(db, case)
             db.commit()
         return [serialize_issue(item) for item in current_issues(db, case)]
-    if case.workflow_mode == "ai_case":
-        advance_issue_version(db, case)
     for issue in issues:
         issue.status = "人工确认"
-        issue.issue_version = case.issue_version
         record_human_trace(
             db,
             case_id=case.id,
@@ -1557,12 +2053,329 @@ def delete_issue(issue_id: int, payload: schemas.IssueAction, db: Session = Depe
     db.delete(issue)
     db.flush()
     if case.workflow_mode == "ai_case":
-        advance_issue_version(db, case)
         sync_analysis_units(db, case)
         reconcile_ai_case_workflow(db, case)
     log_event(db, case_id, "issue_deleted", f"已删除争点：{title}")
     db.commit()
     return {"message": "争点已删除"}
+
+
+ISSUE_VERSION_PUBLISHED_EVENT = "ISSUE_VERSION_PUBLISHED"
+
+
+def find_issue_publish_event(
+    db: Session,
+    case_id: int,
+    operation_id: str,
+) -> tuple[models.WorkflowEvent, dict] | None:
+    events = db.query(models.WorkflowEvent).filter(
+        models.WorkflowEvent.case_id == case_id,
+        models.WorkflowEvent.event_type == ISSUE_VERSION_PUBLISHED_EVENT,
+    ).order_by(models.WorkflowEvent.id.desc()).all()
+    for event in events:
+        payload = from_json(event.payload_json, {})
+        if payload.get("operation_id") == operation_id:
+            return event, payload
+    return None
+
+
+def issue_publish_response(
+    case_id: int,
+    payload: dict,
+    *,
+    replayed: bool,
+) -> schemas.IssuePublishOut:
+    return schemas.IssuePublishOut(
+        case_id=case_id,
+        old_version=int(payload["old_version"]),
+        new_version=int(payload["new_version"]),
+        fact_version=int(payload["fact_version"]),
+        issue_ids=[int(issue_id) for issue_id in payload.get("issue_ids", [])],
+        replayed=replayed,
+    )
+
+
+@app.post("/cases/{case_id}/issues/publish", response_model=schemas.IssuePublishOut)
+def publish_issues(
+    case_id: int,
+    payload: schemas.IssuePublishRequest,
+    db: Session = Depends(get_db),
+    idempotency_key: Annotated[
+        Optional[str],
+        Header(alias="Idempotency-Key"),
+    ] = None,
+):
+    operation_id = payload.operation_id.strip()
+    reason = payload.reason.strip()
+    if not operation_id or not reason:
+        raise HTTPException(status_code=422, detail="operation_id 和 reason 不能为空")
+    if idempotency_key is not None and idempotency_key.strip() != operation_id:
+        raise HTTPException(status_code=409, detail="Idempotency-Key 与 operation_id 不一致")
+
+    try:
+        case = lock_case(db, case_id)
+        replay = find_issue_publish_event(db, case.id, operation_id)
+        if replay:
+            _, event_payload = replay
+            return issue_publish_response(case.id, event_payload, replayed=True)
+        if case.fact_version <= 0:
+            raise HTTPException(status_code=409, detail="当前案件尚无已发布事实版本")
+
+        issues = db.query(models.CaseIssue).filter(
+            models.CaseIssue.case_id == case.id,
+            models.CaseIssue.issue_version == case.issue_version,
+        ).order_by(models.CaseIssue.id).all()
+        if not issues:
+            raise HTTPException(status_code=400, detail="当前争点集为空，无法发布")
+        pending_ids = [
+            issue.id
+            for issue in issues
+            if issue.status not in {"人工确认", "分析中", "已完成"}
+        ]
+        if pending_ids:
+            raise HTTPException(
+                status_code=409,
+                detail={"message": "争点集仍有待审核项，无法发布", "issue_ids": pending_ids},
+            )
+
+        result = publish_issue_version(db, case.id)
+        issue_ids = [issue.id for issue in issues]
+        for issue in issues:
+            issue.issue_version = result.new_version
+            issue.fact_version = case.fact_version
+
+        event_payload = {
+            "old_version": result.old_version,
+            "new_version": result.new_version,
+            "fact_version": case.fact_version,
+            "issue_ids": issue_ids,
+            "reason": reason,
+            "source": "issues_publish",
+            "operation_id": operation_id,
+        }
+        db.add(models.WorkflowEvent(
+            case_id=case.id,
+            event_type=ISSUE_VERSION_PUBLISHED_EVENT,
+            message=f"争点版本已从 V{result.old_version} 发布至 V{result.new_version}",
+            payload_json=to_json(event_payload),
+        ))
+        db.flush()
+        db.commit()
+        return issue_publish_response(case.id, event_payload, replayed=False)
+    except HTTPException:
+        db.rollback()
+        raise
+    except CaseNotFoundError as error:
+        db.rollback()
+        raise HTTPException(status_code=404, detail="未找到案件") from error
+    except ConcurrentVersionUpdateError as error:
+        db.rollback()
+        raise HTTPException(status_code=409, detail=str(error)) from error
+    except Exception:
+        db.rollback()
+        raise
+
+
+@app.post("/cases/{case_id}/analyses/publish", response_model=schemas.AnalysisPublishOut)
+def publish_analyses(
+    case_id: int,
+    payload: schemas.AnalysisPublishRequest,
+    db: Session = Depends(get_db),
+    idempotency_key: Annotated[
+        Optional[str],
+        Header(alias="Idempotency-Key"),
+    ] = None,
+):
+    operation_id = payload.operation_id.strip()
+    reason = payload.reason.strip()
+    analysis_ids = sorted(set(payload.analysis_ids))
+    if not operation_id or not reason or not analysis_ids:
+        raise HTTPException(
+            status_code=422,
+            detail="analysis_ids、operation_id 和 reason 不能为空",
+        )
+    if idempotency_key is not None and idempotency_key.strip() != operation_id:
+        raise HTTPException(status_code=409, detail="Idempotency-Key 与 operation_id 不一致")
+
+    try:
+        case = lock_case(db, case_id)
+        if case.fact_version <= 0:
+            raise HTTPException(status_code=409, detail="当前案件尚无已发布事实版本")
+        if case.issue_version <= 0:
+            raise HTTPException(status_code=409, detail="当前案件尚无已发布争点版本")
+
+        outputs = db.query(models.AIOutput).filter(
+            models.AIOutput.id.in_(analysis_ids)
+        ).order_by(models.AIOutput.id).all()
+        found_ids = {output.id for output in outputs}
+        missing_ids = sorted(set(analysis_ids) - found_ids)
+        if missing_ids:
+            raise HTTPException(
+                status_code=404,
+                detail={"message": "部分分析输出不存在", "analysis_ids": missing_ids},
+            )
+        wrong_case_ids = [output.id for output in outputs if output.case_id != case.id]
+        if wrong_case_ids:
+            raise HTTPException(
+                status_code=409,
+                detail={"message": "部分分析不属于当前案件", "analysis_ids": wrong_case_ids},
+            )
+        wrong_type_ids = [
+            output.id for output in outputs if output.output_type != "legal_analysis"
+        ]
+        if wrong_type_ids:
+            raise HTTPException(
+                status_code=409,
+                detail={"message": "只能发布法律分析输出", "analysis_ids": wrong_type_ids},
+            )
+        stale_ids = [
+            output.id
+            for output in outputs
+            if output.material_version != case.material_version
+            or output.fact_version != case.fact_version
+            or output.issue_version != case.issue_version
+        ]
+        if stale_ids:
+            raise HTTPException(
+                status_code=409,
+                detail={"message": "部分分析的输入版本已过期", "analysis_ids": stale_ids},
+            )
+        unreviewed_ids = [
+            output.id
+            for output in outputs
+            if output.review_status not in {"已接受", "已修改"}
+        ]
+        if unreviewed_ids:
+            raise HTTPException(
+                status_code=409,
+                detail={"message": "部分分析尚未完成审核", "analysis_ids": unreviewed_ids},
+            )
+
+        result = publish_analysis_version(
+            db,
+            case.id,
+            analysis_ids=analysis_ids,
+            reason=reason,
+            source="analyses_publish",
+            operation_id=operation_id,
+        )
+        db.commit()
+        return schemas.AnalysisPublishOut(
+            case_id=result.case_id,
+            old_version=result.old_version,
+            new_version=result.new_version,
+            analysis_digest=result.analysis_digest,
+            analysis_ids=list(result.analysis_ids),
+            replayed=result.replayed,
+        )
+    except HTTPException:
+        db.rollback()
+        raise
+    except CaseNotFoundError as error:
+        db.rollback()
+        raise HTTPException(status_code=404, detail="未找到案件") from error
+    except ConcurrentVersionUpdateError as error:
+        db.rollback()
+        raise HTTPException(status_code=409, detail=str(error)) from error
+    except ValueError as error:
+        db.rollback()
+        raise HTTPException(status_code=400, detail=str(error)) from error
+    except Exception:
+        db.rollback()
+        raise
+
+
+@app.post(
+    "/cases/{case_id}/reports/{report_id}/publish",
+    response_model=schemas.ReportPublishOut,
+)
+def publish_report(
+    case_id: int,
+    report_id: int,
+    payload: schemas.ReportPublishRequest,
+    db: Session = Depends(get_db),
+    idempotency_key: Annotated[
+        Optional[str],
+        Header(alias="Idempotency-Key"),
+    ] = None,
+):
+    operation_id = payload.operation_id.strip()
+    reason = payload.reason.strip()
+    if not operation_id or not reason:
+        raise HTTPException(status_code=422, detail="operation_id 和 reason 不能为空")
+    if idempotency_key is not None and idempotency_key.strip() != operation_id:
+        raise HTTPException(status_code=409, detail="Idempotency-Key 与 operation_id 不一致")
+
+    try:
+        case = lock_case(db, case_id)
+        report = db.query(models.AIOutput).filter(
+            models.AIOutput.id == report_id
+        ).first()
+        if not report:
+            raise HTTPException(status_code=404, detail="未找到报告")
+        if report.case_id != case.id or report.output_type != "legal_report":
+            raise HTTPException(status_code=409, detail="报告不属于当前案件")
+        if report.review_status not in {"已接受", "已修改"}:
+            raise HTTPException(status_code=409, detail="报告尚未完成审核")
+        if case.analysis_version <= 0 or report.analysis_version != case.analysis_version:
+            raise HTTPException(status_code=409, detail="报告未绑定当前正式分析版本")
+
+        snapshot = from_json(report.input_snapshot_json, {})
+        try:
+            snapshot_analysis_version = int(snapshot.get("analysis_version", 0))
+            analysis_ids = sorted({int(value) for value in snapshot.get("analysis_ids", [])})
+        except (TypeError, ValueError) as error:
+            raise HTTPException(status_code=409, detail="报告分析谱系快照无效") from error
+        analysis_digest = str(snapshot.get("analysis_digest") or "")
+        if snapshot_analysis_version != case.analysis_version or not analysis_ids or not analysis_digest:
+            raise HTTPException(status_code=409, detail="报告分析谱系快照不完整")
+        analyses = db.query(models.AIOutput).filter(
+            models.AIOutput.case_id == case.id,
+            models.AIOutput.id.in_(analysis_ids),
+            models.AIOutput.output_type == "legal_analysis",
+            models.AIOutput.analysis_version == case.analysis_version,
+        ).order_by(models.AIOutput.id).all()
+        if [output.id for output in analyses] != analysis_ids:
+            raise HTTPException(status_code=409, detail="报告引用的分析不属于当前正式版本")
+        current_analysis_digest = compute_analysis_digest(db, case.id, analysis_ids)
+        if current_analysis_digest != analysis_digest:
+            raise HTTPException(status_code=409, detail="报告引用的分析 digest 已过期")
+
+        result = publish_report_version(
+            db,
+            case.id,
+            report_id=report.id,
+            reason=reason,
+            source="reports_publish",
+            operation_id=operation_id,
+        )
+        db.commit()
+        return schemas.ReportPublishOut(
+            case_id=result.case_id,
+            report_id=result.report_id,
+            old_version=result.old_version,
+            new_version=result.new_version,
+            report_digest=result.report_digest,
+            analysis_version=result.analysis_version,
+            analysis_digest=result.analysis_digest,
+            analysis_ids=list(result.analysis_ids),
+            replayed=result.replayed,
+        )
+    except HTTPException:
+        db.rollback()
+        raise
+    except CaseNotFoundError as error:
+        db.rollback()
+        raise HTTPException(status_code=404, detail="未找到案件") from error
+    except ConcurrentVersionUpdateError as error:
+        db.rollback()
+        raise HTTPException(status_code=409, detail=str(error)) from error
+    except ValueError as error:
+        db.rollback()
+        raise HTTPException(status_code=400, detail=str(error)) from error
+    except Exception:
+        db.rollback()
+        raise
 
 
 @app.post("/cases/{case_id}/legal-analysis-report", response_model=schemas.AIOutputOut)
@@ -1880,26 +2693,21 @@ def add_follow_up(case_id: int, payload: schemas.FollowUpCreate, db: Session = D
 
 
 @app.post("/cases/{case_id}/documents/upload", response_model=schemas.DocumentOut)
-def upload_document(case_id: int, file: UploadFile = File(...), db: Session = Depends(get_db)):
+def upload_document(
+    case_id: int,
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    operation_id: Annotated[Optional[str], Header(alias="Idempotency-Key")] = None,
+):
     require_case(db, case_id)
-    case_dir = UPLOAD_DIR / str(case_id)
-    case_dir.mkdir(exist_ok=True)
-    target = case_dir / file.filename
-    with target.open("wb") as buffer:
-        shutil.copyfileobj(file.file, buffer)
-
-    parsed = parse_document(target)
-    document = models.Document(
-        case_id=case_id,
-        filename=file.filename,
-        file_type=target.suffix.replace(".", "") or "unknown",
-        raw_text=parsed["raw_text"],
-        parsed_json=to_json(parsed["parsed_json"]),
+    document = persist_upload(db, case_id, file, operation_id=operation_id)
+    log_event(
+        db,
+        case_id,
+        "document_uploaded",
+        f"已持久保存材料：{document.original_filename}",
+        {"document_id": document.id, "processing_status": document.processing_status},
     )
-    db.add(document)
-    db.commit()
-    db.refresh(document)
-    log_event(db, case_id, "document_uploaded", f"已上传并解析材料：{file.filename}", parsed["parsed_json"])
     record_human_trace(
         db,
         case_id=case_id,
@@ -1907,7 +2715,7 @@ def upload_document(case_id: int, file: UploadFile = File(...), db: Session = De
         object_type="材料",
         object_id=document.id,
         ai_suggestion="无 AI 原始建议",
-        human_revision=file.filename,
+        human_revision=document.original_filename,
         reason="人工上传案件材料",
         tags=["材料", "上传"],
     )
@@ -1920,6 +2728,383 @@ def list_documents(case_id: int, db: Session = Depends(get_db)):
     require_case(db, case_id)
     documents = db.query(models.Document).filter(models.Document.case_id == case_id).all()
     return [serialize_document(item) for item in documents]
+
+
+def require_document(db: Session, document_id: int) -> models.Document:
+    document = db.query(models.Document).filter(models.Document.id == document_id).first()
+    if not document:
+        raise HTTPException(status_code=404, detail="未找到材料")
+    return document
+
+
+def document_storage(document: models.Document) -> StorageService:
+    if document.storage_provider in {"legacy_local", "inline_text"} or not document.storage_key:
+        raise HTTPException(status_code=410, detail="旧材料或现场输入未保留可下载的原始文件")
+    try:
+        return get_storage_service(document.storage_provider)
+    except StorageError as exc:
+        raise HTTPException(status_code=503, detail="材料存储服务暂时不可用") from exc
+
+
+@app.get("/documents/{document_id}/download-url")
+def get_document_download_url(
+    document_id: int,
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    document = require_document(db, document_id)
+    storage = document_storage(document)
+    try:
+        if not storage.exists(document.storage_key):
+            raise HTTPException(status_code=410, detail="原始文件已不可用")
+        url = storage.create_presigned_download_url(document.storage_key, expires_in=300)
+    except StorageError as exc:
+        raise HTTPException(status_code=503, detail="暂时无法生成下载地址") from exc
+    if not url:
+        url = str(request.url_for("download_document", document_id=document.id))
+    return {"url": url, "expires_in": 300}
+
+
+@app.get("/documents/{document_id}/download", name="download_document")
+def download_document(document_id: int, db: Session = Depends(get_db)):
+    document = require_document(db, document_id)
+    storage = document_storage(document)
+    if document.storage_provider != "local":
+        raise HTTPException(status_code=400, detail="对象存储文件请先获取短期下载地址")
+    try:
+        stream = storage.open_stream(document.storage_key)
+    except StorageError as exc:
+        raise HTTPException(status_code=410, detail="原始文件已不可用") from exc
+    filename = quote(document.original_filename or document.filename)
+    return StreamingResponse(
+        stream,
+        media_type=document.mime_type,
+        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{filename}"},
+    )
+
+
+@app.delete("/cases/{case_id}/documents/{document_id}")
+def delete_document(
+    case_id: int,
+    document_id: int,
+    db: Session = Depends(get_db),
+    operation_id: Annotated[Optional[str], Header(alias="Idempotency-Key")] = None,
+):
+    require_case(db, case_id)
+    document = db.query(models.Document).filter(
+        models.Document.id == document_id,
+        models.Document.case_id == case_id,
+    ).first()
+    if not document:
+        raise HTTPException(status_code=404, detail="未找到材料")
+    filename = document.original_filename or document.filename
+    storage = None
+    backup_path: Optional[Path] = None
+    if document.storage_key and document.storage_provider not in {"legacy_local", "inline_text"}:
+        storage = document_storage(document)
+        try:
+            backup_path = storage.download_to_temp(
+                document.storage_key,
+                suffix=f".{document.file_type}",
+            )
+            storage.delete(document.storage_key)
+        except StorageError as exc:
+            if backup_path:
+                try:
+                    with backup_path.open("rb") as source:
+                        storage.put(document.storage_key, source, document.mime_type)
+                except StorageError:
+                    pass
+                backup_path.unlink(missing_ok=True)
+            raise HTTPException(status_code=503, detail="原始文件删除失败，材料记录未删除") from exc
+    record_human_trace(
+        db,
+        case_id=case_id,
+        action="删除材料",
+        object_type="材料",
+        object_id=document.id,
+        ai_suggestion="无 AI 原始建议",
+        human_revision=filename,
+        reason="人工删除案件材料及其原始文件",
+        tags=["材料", "删除"],
+    )
+    db.delete(document)
+    try:
+        db.flush()
+        advance_material_version(
+            db,
+            case_id,
+            reason="删除案件材料",
+            source="document_delete",
+            operation_id=operation_id,
+        )
+        db.commit()
+    except Exception:
+        db.rollback()
+        if storage and backup_path and document.storage_key:
+            try:
+                with backup_path.open("rb") as source:
+                    storage.put(document.storage_key, source, document.mime_type)
+            except StorageError:
+                pass
+        raise
+    finally:
+        if backup_path:
+            backup_path.unlink(missing_ok=True)
+    log_event(db, case_id, "document_deleted", f"已删除材料：{filename}")
+    return {"ok": True}
+
+
+@app.post("/cases/{case_id}/redactions/detect", response_model=schemas.RedactionRecordOut)
+def detect_redaction(
+    case_id: int,
+    payload: schemas.RedactionDetectRequest,
+    db: Session = Depends(get_db),
+):
+    case = require_case(db, case_id)
+    document = db.query(models.Document).filter(
+        models.Document.id == payload.document_id,
+        models.Document.case_id == case_id,
+    ).first()
+    if not document:
+        raise HTTPException(status_code=404, detail="未找到案件材料")
+    try:
+        record = create_redaction_record(db, case, document, force=payload.force)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    db.commit()
+    db.refresh(record)
+    log_event(
+        db,
+        case_id,
+        "redaction_detected",
+        "已生成材料脱敏检测版本",
+        {"redaction_id": record.id, "document_id": document.id, "version": record.version, "item_count": len(record.items)},
+    )
+    db.commit()
+    return serialize_redaction(record)
+
+
+@app.get("/cases/{case_id}/redactions", response_model=list[schemas.RedactionRecordOut])
+def list_redactions(case_id: int, db: Session = Depends(get_db)):
+    require_case(db, case_id)
+    records = db.query(models.RedactionRecord).filter(
+        models.RedactionRecord.case_id == case_id,
+    ).order_by(models.RedactionRecord.document_id.asc(), models.RedactionRecord.version.desc()).all()
+    return [serialize_redaction(record) for record in records]
+
+
+@app.get("/redactions/{redaction_id}", response_model=schemas.RedactionRecordOut)
+def get_redaction(redaction_id: int, db: Session = Depends(get_db)):
+    return serialize_redaction(require_redaction(db, redaction_id))
+
+
+def ensure_current_redaction(record: models.RedactionRecord) -> None:
+    if record.status == "superseded" or document_text_checksum(record.document) != record.source_checksum:
+        raise HTTPException(status_code=409, detail="原始材料已变化，请重新检测并确认新的脱敏版本")
+
+
+def add_redaction_trace(
+    db: Session,
+    record: models.RedactionRecord,
+    *,
+    action: str,
+    reason: str,
+    item_id: int | None = None,
+) -> None:
+    record_human_trace(
+        db,
+        case_id=record.case_id,
+        action=action,
+        object_type="脱敏版本" if item_id is None else "脱敏项",
+        object_id=item_id or record.id,
+        ai_suggestion="系统脱敏检测结果（敏感原文不写入决策记录）",
+        human_revision=f"脱敏版本 v{record.version} 的规则与确认状态已更新",
+        reason=reason,
+        tags=["脱敏", action],
+    )
+
+
+@app.post("/redactions/{redaction_id}/items", response_model=schemas.RedactionRecordOut)
+def add_redaction_item(
+    redaction_id: int,
+    payload: schemas.RedactionItemCreate,
+    db: Session = Depends(get_db),
+):
+    record = require_redaction(db, redaction_id)
+    ensure_current_redaction(record)
+    service = RedactionService()
+    try:
+        candidate = service.manual_item(
+            record.document.raw_text or "",
+            start_offset=payload.start_offset,
+            end_offset=payload.end_offset,
+            entity_type=payload.entity_type,
+            replacement=payload.replacement,
+            action=payload.action,
+            confidence=payload.confidence,
+            rule_code=payload.rule_code,
+        )
+        service.validate(record.document.raw_text or "", [*redaction_candidates(record.items), candidate])
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    item = models.RedactionItem(
+        redaction_id=record.id,
+        entity_type=candidate.entity_type,
+        start_offset=candidate.start_offset,
+        end_offset=candidate.end_offset,
+        replacement=candidate.replacement,
+        action=candidate.action,
+        confidence=candidate.confidence,
+        rule_code=candidate.rule_code,
+        review_status=payload.review_status,
+        original_fingerprint=candidate.original_fingerprint,
+    )
+    db.add(item)
+    db.flush()
+    refresh_redaction_preview(record)
+    record.status = "draft"
+    add_redaction_trace(db, record, action="新增脱敏项", reason="人工新增或补充敏感项", item_id=item.id)
+    db.commit()
+    db.refresh(record)
+    return serialize_redaction(record)
+
+
+@app.patch("/redactions/{redaction_id}/items/{item_id}", response_model=schemas.RedactionRecordOut)
+def update_redaction_item(
+    redaction_id: int,
+    item_id: int,
+    payload: schemas.RedactionItemUpdate,
+    db: Session = Depends(get_db),
+):
+    record = require_redaction(db, redaction_id)
+    ensure_current_redaction(record)
+    item = db.query(models.RedactionItem).filter(
+        models.RedactionItem.id == item_id,
+        models.RedactionItem.redaction_id == record.id,
+    ).first()
+    if not item:
+        raise HTTPException(status_code=404, detail="未找到脱敏项")
+    for field, value in payload.model_dump(exclude_unset=True).items():
+        setattr(item, field, value)
+    try:
+        RedactionService().validate(record.document.raw_text or "", redaction_candidates(record.items))
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    refresh_redaction_preview(record)
+    record.status = "draft"
+    add_redaction_trace(db, record, action="修改脱敏项", reason="人工复核后调整脱敏规则或保留状态", item_id=item.id)
+    db.commit()
+    db.refresh(record)
+    return serialize_redaction(record)
+
+
+@app.delete("/redactions/{redaction_id}/items/{item_id}", response_model=schemas.RedactionRecordOut)
+def delete_redaction_item(redaction_id: int, item_id: int, db: Session = Depends(get_db)):
+    record = require_redaction(db, redaction_id)
+    ensure_current_redaction(record)
+    item = db.query(models.RedactionItem).filter(
+        models.RedactionItem.id == item_id,
+        models.RedactionItem.redaction_id == record.id,
+    ).first()
+    if not item:
+        raise HTTPException(status_code=404, detail="未找到脱敏项")
+    record.items.remove(item)
+    db.delete(item)
+    db.flush()
+    refresh_redaction_preview(record)
+    record.status = "draft"
+    add_redaction_trace(db, record, action="删除脱敏项", reason="人工确认该识别项不需要脱敏", item_id=item_id)
+    db.commit()
+    db.refresh(record)
+    return serialize_redaction(record)
+
+
+@app.post("/redactions/{redaction_id}/items/batch-accept", response_model=schemas.RedactionRecordOut)
+def batch_accept_redaction_items(
+    redaction_id: int,
+    payload: schemas.RedactionBatchAccept,
+    db: Session = Depends(get_db),
+):
+    record = require_redaction(db, redaction_id)
+    ensure_current_redaction(record)
+    accepted = 0
+    for item in record.items:
+        if item.rule_code != "manual" and item.confidence >= 0.85 and item.action != "keep":
+            item.review_status = payload.review_status
+            accepted += 1
+    refresh_redaction_preview(record)
+    record.status = "draft"
+    add_redaction_trace(db, record, action="批量接受脱敏项", reason=f"人工批量接受 {accepted} 条高置信度规则")
+    db.commit()
+    db.refresh(record)
+    return serialize_redaction(record)
+
+
+@app.post("/redactions/{redaction_id}/confirm", response_model=schemas.RedactionRecordOut)
+def confirm_redaction(
+    redaction_id: int,
+    payload: schemas.RedactionConfirm,
+    db: Session = Depends(get_db),
+    operation_id: Annotated[Optional[str], Header(alias="Idempotency-Key")] = None,
+):
+    record = require_redaction(db, redaction_id)
+    ensure_current_redaction(record)
+    if payload.use_original:
+        if not payload.original_material_confirmed or not payload.risk_acknowledged:
+            raise HTTPException(status_code=422, detail="使用原文分析前，请确认材料已自行脱敏并确认原文发送风险")
+        record.analysis_mode = "original"
+        record.status = "original_confirmed"
+        action = "确认使用原文分析"
+        reason = "人工确认材料为虚构或已自行脱敏，并知悉原文将进入后续 AI 分析"
+    else:
+        refresh_redaction_preview(record)
+        record.analysis_mode = "redacted"
+        record.status = "confirmed"
+        action = "确认脱敏版本"
+        reason = "人工确认当前脱敏副本可作为后续 AI 分析候选输入"
+    record.confirmed_at = datetime.now()
+    add_redaction_trace(db, record, action=action, reason=reason)
+    try:
+        db.flush()
+        advance_material_version(
+            db,
+            record.case_id,
+            reason=reason,
+            source="redaction_confirm",
+            operation_id=operation_id,
+        )
+        db.add(models.WorkflowEvent(
+            case_id=record.case_id,
+            event_type="redaction_confirmed",
+            message="已确认材料脱敏版本",
+            payload_json=to_json({
+                "redaction_id": record.id,
+                "version": record.version,
+                "analysis_mode": record.analysis_mode,
+            }),
+        ))
+        db.commit()
+        db.refresh(record)
+    except Exception:
+        db.rollback()
+        raise
+    return serialize_redaction(record)
+
+
+@app.post("/redactions/{redaction_id}/retry", response_model=schemas.RedactionRecordOut)
+def retry_redaction(redaction_id: int, db: Session = Depends(get_db)):
+    record = require_redaction(db, redaction_id)
+    record.status = "superseded"
+    db.flush()
+    try:
+        next_record = create_redaction_record(db, record.case, record.document, force=True)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    add_redaction_trace(db, next_record, action="重新检测脱敏", reason="人工要求基于当前原文重新执行敏感项检测")
+    db.commit()
+    db.refresh(next_record)
+    return serialize_redaction(next_record)
 
 
 @app.post("/cases/{case_id}/workflow/run-evidence", response_model=list[schemas.EvidenceOut])

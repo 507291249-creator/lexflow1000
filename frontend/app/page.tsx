@@ -55,7 +55,7 @@ export default function DashboardPage() {
 
   return (
     <div className="mx-auto max-w-7xl space-y-8">
-      <PageHeading eyebrow="法律 AI 推理工作台" title="从新材料开始一次可复核的法律分析" description="沿材料、事实、争点、依据、分析和结论推进，每一次人工判断均形成决策记录。" action={
+      <PageHeading eyebrow="法律 AI 推理工作台" description="大模型加持下的法律工作流，每个决策节点可追溯、可修改、可记忆" action={
           <div className="flex flex-wrap gap-x-5 gap-y-2 text-xs text-slate-500">
             <span>案件 {cases.length}</span>
             <span>待复核 {pendingCases.length}</span>
