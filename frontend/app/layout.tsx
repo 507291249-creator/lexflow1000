@@ -3,8 +3,8 @@ import "./globals.css";
 import { AppShell } from "@/components/AppShell";
 
 export const metadata: Metadata = {
-  title: "LexFlow MVP",
-  description: "法律 AI 工作流与知识沉淀系统"
+  title: "LexFlow · 法律推理工作台",
+  description: "材料可追溯、事实可确认、争点可编辑、分析逐项展开的法律推理工作平台"
 };
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {

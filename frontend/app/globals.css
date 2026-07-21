@@ -3,37 +3,55 @@
 @tailwind utilities;
 
 :root {
-  --app-bg: #F5F7F9;
+  /* ===== Surfaces & ink ===== */
+  --app-bg: #F3F5F8;
   --surface: #ffffff;
-  --surface-subtle: #f8fafb;
-  --ink: #111827;
-  --ink-subtle: #374151;
-  --muted: #4B5563;
-  --line: #D8DEE6;
-  --line-subtle: #E5E7EB;
-  --court: #235F8C;
-  --court-hover: #173F5F;
-  --court-subtle: #EAF2F8;
-  --mint: #256B5A;
-  --mint-subtle: #E7F2EE;
-  --primary-700: #173F5F;
-  --primary-600: #173F5F;
-  --primary-100: #EAF2F8;
-  --success-700: #174F43;
-  --success-600: #256B5A;
-  --success-100: #E7F2EE;
-  --ai-700: #51446D;
-  --ai-600: #6A5A88;
-  --ai-100: #F1EEF6;
-  --ai-border: #D8D0E3;
-  --warning: #A86618;
-  --warning-bg: #FBF1DF;
-  --danger: #A83C38;
-  --danger-bg: #F8E9E7;
-  --inactive: #66717D;
-  --inactive-subtle: #E5E7EB;
+  --surface-subtle: #F6F8FA;
+  --surface-sunken: #EEF1F4;
+  --ink: #0F1B2D;
+  --ink-subtle: #2A3A4F;
+  --muted: #4B5663;
+  --line: #D7DEE6;
+  --line-subtle: #E6EBF1;
 
-  /* Professional typography variables */
+  /* ===== Primary / court (blue) — flow, nav, primary action, current context ===== */
+  --court: #1F5A88;
+  --court-hover: #194A6E;
+  --court-subtle: #E8F0F7;
+  --court-border: #BFD3E2;
+  --primary-700: #194A6E;
+  --primary-600: #1F5A88;
+  --primary-100: #E8F0F7;
+
+  /* ===== Mint (teal-green) — human confirmed, valid, trusted ===== */
+  --mint: #1F6B5A;
+  --mint-subtle: #E6F1ED;
+  --mint-border: #BFDDD2;
+  --success-700: #174F43;
+  --success-600: #1F6B5A;
+  --success-100: #E6F1ED;
+
+  /* ===== AI (desaturated purple) — AI output, reasoning, model info ===== */
+  --ai-700: #4E426A;
+  --ai-600: #5E5180;
+  --ai-100: #F0EDF6;
+  --ai-border: #D6CFE2;
+
+  /* ===== Warning (amber) — pending, caution ===== */
+  --warning: #9A5E16;
+  --warning-bg: #FBF1DF;
+  --warning-border: #EBD6A8;
+
+  /* ===== Danger (dark red) — failure, reject, destructive ===== */
+  --danger: #9E3733;
+  --danger-bg: #F7E9E7;
+  --danger-border: #E6C6C3;
+
+  /* ===== Inactive (neutral gray) — history, expired, disabled, auxiliary ===== */
+  --inactive: #69737E;
+  --inactive-subtle: #E7EAEE;
+
+  /* ===== Typography ===== */
   --text-xs: 0.6875rem;
   --text-sm: 0.75rem;
   --text-base: 0.875rem;
@@ -45,7 +63,7 @@
   --leading-normal: 1.5;
   --leading-relaxed: 1.625;
 
-  /* Professional spacing variables */
+  /* ===== Spacing ===== */
   --spacing-1: 0.25rem;
   --spacing-2: 0.5rem;
   --spacing-3: 0.75rem;
@@ -54,10 +72,11 @@
   --spacing-6: 1.5rem;
   --spacing-8: 2rem;
 
-  /* Professional shadow variables */
-  --shadow-card-sm: 0 1px 2px rgba(0, 0, 0, 0.04);
-  --shadow-card: 0 1px 3px rgba(0, 0, 0, 0.06);
-  --shadow-card-lg: 0 2px 8px rgba(0, 0, 0, 0.08);
+  /* ===== Shadows — restrained, professional ===== */
+  --shadow-card-sm: 0 1px 2px rgba(15, 27, 45, 0.04);
+  --shadow-card: 0 1px 2px rgba(15, 27, 45, 0.05), 0 1px 1px rgba(15, 27, 45, 0.03);
+  --shadow-card-lg: 0 2px 8px rgba(15, 27, 45, 0.07);
+  --shadow-rail: 0 0 0 1px var(--line);
 
   background: var(--app-bg);
   color: var(--ink);
@@ -68,6 +87,8 @@ body {
   background: var(--app-bg);
   color: var(--ink);
   font-feature-settings: "tnum" 1;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
 }
 
 textarea, input, select {
@@ -75,15 +96,59 @@ textarea, input, select {
 }
 
 textarea:focus, input:focus, select:focus {
-  border-color: #235F8C;
-  box-shadow: 0 0 0 3px rgba(35, 95, 140, 0.1);
+  border-color: var(--court);
+  box-shadow: 0 0 0 3px rgba(31, 90, 136, 0.12);
 }
 
 button, a { -webkit-tap-highlight-color: transparent; }
 
 .bg-app { background: var(--app-bg); }
 
-/* Card styles */
+/* ===== App shell ===== */
+.app-shell {
+  @apply min-h-screen bg-app;
+}
+
+.app-sidebar {
+  @apply hidden lg:flex lg:fixed lg:inset-y-0 lg:left-0 lg:w-60 lg:flex-col lg:border-r lg:border-line lg:bg-white;
+}
+
+.app-sidebar-brand {
+  @apply flex items-center gap-3 px-5 h-16 border-b border-line;
+}
+
+.app-sidebar-nav {
+  @apply flex-1 overflow-y-auto px-3 py-4 space-y-1;
+}
+
+.app-sidebar-footer {
+  @apply border-t border-line px-5 py-3;
+}
+
+.app-main {
+  @apply lg:pl-60 min-h-screen flex flex-col;
+}
+
+.app-topbar {
+  @apply lg:hidden sticky top-0 z-40 border-b border-line bg-white;
+}
+
+.app-content {
+  @apply flex-1 mx-auto w-full max-w-[1680px] px-4 py-5 sm:px-6 lg:px-8;
+}
+
+/* Sidebar nav link */
+.side-link {
+  @apply flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium text-slate-600 transition hover:bg-[var(--surface-subtle)] hover:text-ink;
+}
+.side-link-active {
+  @apply bg-[var(--court-subtle)] text-[var(--court)];
+}
+.side-link-disabled {
+  @apply cursor-not-allowed opacity-60 hover:bg-transparent hover:text-slate-600;
+}
+
+/* ===== Cards ===== */
 .card {
   @apply rounded-lg border border-line bg-white;
   box-shadow: var(--shadow-card);
@@ -99,7 +164,7 @@ button, a { -webkit-tap-highlight-color: transparent; }
   box-shadow: var(--shadow-card-sm);
 }
 
-/* Button styles */
+/* ===== Buttons ===== */
 .button {
   @apply inline-flex items-center justify-center gap-2 rounded-md px-3 py-2 text-sm font-medium transition disabled:cursor-not-allowed disabled:opacity-50;
 }
@@ -120,7 +185,11 @@ button, a { -webkit-tap-highlight-color: transparent; }
   @apply button text-ink hover:bg-[var(--surface-subtle)];
 }
 
-/* Badge styles */
+.button-danger {
+  @apply button border border-[var(--danger-border)] bg-white text-[var(--danger)] hover:bg-[var(--danger-bg)];
+}
+
+/* ===== Badges ===== */
 .badge {
   @apply rounded px-2 py-1 text-xs font-medium;
 }
@@ -129,37 +198,24 @@ button, a { -webkit-tap-highlight-color: transparent; }
   @apply rounded px-1.5 py-0.5 text-[11px] font-medium;
 }
 
-/* Navigation styles */
-.top-navigation {
-  @apply sticky top-0 z-40 border-b border-line bg-white/95 backdrop-blur;
-}
-
-.top-nav-link {
-  @apply inline-flex shrink-0 items-center gap-2 rounded-md px-3 py-2 text-xs font-medium text-slate-600 transition hover:bg-[var(--surface-subtle)] hover:text-ink sm:text-sm;
-}
-
-.top-nav-link-active {
-  @apply bg-[var(--primary-100)] text-[var(--court)] font-medium;
-}
-
 .entity-code {
-  @apply inline-flex shrink-0 items-center rounded border border-[var(--line)] bg-[var(--primary-100)] px-2 py-1 text-xs font-semibold text-[var(--court)];
+  @apply inline-flex shrink-0 items-center rounded border border-[var(--court-border)] bg-[var(--court-subtle)] px-2 py-1 text-xs font-semibold text-[var(--court)];
 }
 
-/* Status badge styles */
+/* ===== Status badges ===== */
 .status-badge {
   @apply inline-flex shrink-0 items-center rounded px-2 py-1 text-xs font-medium;
 }
 
 .status-ai { @apply bg-[var(--ai-100)] text-[var(--ai-600)]; }
 .status-pending { @apply bg-[var(--warning-bg)] text-[var(--warning)]; }
-.status-confirmed { @apply bg-[var(--success-100)] text-[var(--success-600)]; }
+.status-confirmed { @apply bg-[var(--mint-subtle)] text-[var(--mint)]; }
 .status-rerun { @apply bg-[var(--warning-bg)] text-[var(--warning)]; }
 .status-expired { @apply bg-[var(--inactive-subtle)] text-[var(--inactive)]; }
 .status-failed { @apply bg-[var(--danger-bg)] text-[var(--danger)]; }
 .status-unavailable { @apply bg-[var(--inactive-subtle)] text-[var(--inactive)]; }
 
-/* Page heading styles */
+/* ===== Page heading ===== */
 .page-heading {
   @apply flex flex-wrap items-end justify-between gap-4 border-b border-line pb-5;
 }
@@ -168,27 +224,26 @@ button, a { -webkit-tap-highlight-color: transparent; }
 .page-heading p { @apply mt-2 max-w-3xl text-sm leading-6 text-slate-600; }
 .page-eyebrow { @apply text-xs font-semibold text-[var(--court)] uppercase tracking-wide; }
 
-/* Workspace header styles */
+/* ===== Workspace header ===== */
 .workspace-header {
-  @apply flex flex-wrap items-center justify-between gap-4 pb-6 border-b border-line;
+  @apply flex flex-wrap items-center justify-between gap-4 pb-5 border-b border-line;
 }
 
 .workspace-header h1 { @apply text-2xl font-semibold text-ink; }
 .workspace-header p { @apply mt-1 text-sm text-slate-500 max-w-2xl; }
 
-/* Feedback state styles */
+/* ===== Feedback states ===== */
 .feedback-state {
   @apply flex min-h-16 items-center gap-3 rounded-md border border-line bg-white px-4 py-3 text-sm text-slate-600;
 }
 
-/* Empty state styles */
 .empty-state {
-  @apply flex min-h-28 flex-col items-center justify-center gap-3 rounded-md border border-dashed border-line bg-slate-50 px-5 py-6 text-center text-slate-400;
+  @apply flex min-h-28 flex-col items-center justify-center gap-3 rounded-md border border-dashed border-line bg-[var(--surface-subtle)] px-5 py-6 text-center text-slate-400;
 }
 
 .empty-state p { @apply mt-1 max-w-xl text-sm leading-6 text-slate-500; }
 
-/* Reasoning card styles */
+/* ===== Reasoning cards ===== */
 .reasoning-card {
   @apply rounded-lg border border-line bg-white p-4;
 }
@@ -197,12 +252,11 @@ button, a { -webkit-tap-highlight-color: transparent; }
   @apply rounded-md border border-line bg-white p-4;
 }
 
-/* Metric card styles */
 .metric-card {
   @apply rounded-md border border-line bg-white p-4;
 }
 
-/* Data table styles */
+/* ===== Data table ===== */
 .data-table {
   @apply w-full text-sm;
 }
@@ -219,12 +273,11 @@ button, a { -webkit-tap-highlight-color: transparent; }
   @apply px-4 py-3 text-left align-top;
 }
 
-/* Professional badge styles */
+/* ===== Professional badge ===== */
 .professional-badge {
   @apply inline-flex shrink-0 items-center rounded px-2 py-0.5 text-[11px] font-medium;
 }
 
-/* Compact list styles */
 .compact-list {
   @apply space-y-2;
 }
@@ -233,16 +286,16 @@ button, a { -webkit-tap-highlight-color: transparent; }
   @apply flex items-start justify-between gap-3 px-4 py-2 border-b border-line last:border-0 hover:bg-[var(--surface-subtle)];
 }
 
-/* Workbench layout styles */
+/* ===== Workbench layout ===== */
 .workbench-sidebar {
-  @apply hidden md:flex w-64 flex-col border-r border-line bg-white/95 backdrop-blur;
+  @apply hidden md:flex w-64 flex-col border-r border-line bg-white;
 }
 
 .workbench-main {
   @apply flex-1 min-w-0;
 }
 
-/* Divider styles */
+/* ===== Dividers ===== */
 .divider {
   @apply border-t border-line my-4;
 }
@@ -255,16 +308,18 @@ button, a { -webkit-tap-highlight-color: transparent; }
   @apply border-l border-line mx-4 h-4;
 }
 
-/* Utility classes */
+/* ===== Utility colors ===== */
 .text-ink-subtle { color: var(--ink-subtle); }
 .text-court { color: var(--court); }
 .text-success { color: var(--success-600); }
+.text-mint { color: var(--mint); }
 .text-ai { color: var(--ai-600); }
 .text-warning { color: var(--warning); }
 .text-danger { color: var(--danger); }
 .text-inactive { color: var(--inactive); }
 
 .bg-surface-subtle { background: var(--surface-subtle); }
+.bg-surface-sunken { background: var(--surface-sunken); }
 .bg-primary-light { background: var(--primary-100); }
 .bg-success-light { background: var(--success-100); }
 .bg-ai-light { background: var(--ai-100); }
@@ -274,12 +329,12 @@ button, a { -webkit-tap-highlight-color: transparent; }
 
 .border-line-subtle { border-color: var(--line-subtle); }
 .border-primary-light { border-color: var(--primary-100); }
-.border-success-light { border-color: var(--success-100); }
+.border-success-light { border-color: var(--mint-border); }
 .border-ai-light { border-color: var(--ai-border); }
+.border-court { border-color: var(--court); }
+.border-mint { border-color: var(--mint); }
 
 /* ===== Case workspace components ===== */
-
-/* Unified workspace card surface */
 .workspace-card {
   @apply rounded-lg border border-line bg-white p-4;
   box-shadow: var(--shadow-card-sm);
@@ -290,7 +345,6 @@ button, a { -webkit-tap-highlight-color: transparent; }
   box-shadow: var(--shadow-card-sm);
 }
 
-/* Section header: title + description + optional action slot */
 .section-header {
   @apply flex flex-wrap items-start justify-between gap-3;
 }
@@ -303,16 +357,14 @@ button, a { -webkit-tap-highlight-color: transparent; }
   @apply mt-1 text-xs leading-5 text-slate-500;
 }
 
-/* Version chip — fact / issue / analysis / report version markers */
 .version-chip {
   @apply inline-flex shrink-0 items-center gap-1 rounded border border-line bg-[var(--surface-subtle)] px-1.5 py-0.5 text-[11px] font-medium text-slate-600;
 }
 
 .version-chip-court {
-  @apply border-[var(--court)] bg-[var(--court-subtle)] text-[var(--court)];
+  @apply border-[var(--court-border)] bg-[var(--court-subtle)] text-[var(--court)];
 }
 
-/* Source tag — provenance marker */
 .source-tag {
   @apply inline-flex shrink-0 items-center gap-1 rounded bg-[var(--surface-subtle)] px-1.5 py-0.5 text-[11px] text-slate-500;
 }
@@ -323,7 +375,7 @@ button, a { -webkit-tap-highlight-color: transparent; }
 }
 
 .human-surface {
-  @apply rounded-md border border-[var(--mint-subtle)] bg-[var(--mint-subtle)] px-3 py-2;
+  @apply rounded-md border border-[var(--mint-border)] bg-[var(--mint-subtle)] px-3 py-2;
 }
 
 .neutral-surface {
@@ -340,10 +392,75 @@ button, a { -webkit-tap-highlight-color: transparent; }
 }
 
 .trace-diff-human {
-  @apply max-h-72 overflow-auto whitespace-pre-wrap rounded-md border border-[var(--mint-subtle)] bg-[var(--mint-subtle)] p-3 text-xs leading-5 text-slate-700;
+  @apply max-h-72 overflow-auto whitespace-pre-wrap rounded-md border border-[var(--mint-border)] bg-[var(--mint-subtle)] p-3 text-xs leading-5 text-slate-700;
 }
 
-/* Rail node */
 .rail-node-active {
   @apply bg-[var(--court-subtle)];
+}
+
+/* ===== Work queue table (cases) ===== */
+.work-queue {
+  @apply overflow-hidden rounded-lg border border-line bg-white;
+  box-shadow: var(--shadow-card-sm);
+}
+
+.work-queue table {
+  @apply w-full text-sm;
+}
+
+.work-queue thead th {
+  @apply px-4 py-3 text-left text-[11px] font-semibold uppercase tracking-wider text-slate-500 bg-[var(--surface-subtle)] border-b border-line;
+}
+
+.work-queue tbody tr {
+  @apply border-b border-line-subtle transition-colors hover:bg-[var(--surface-subtle)] last:border-0;
+}
+
+.work-queue tbody td {
+  @apply px-4 py-3 align-middle;
+}
+
+.work-queue-row-link {
+  @apply cursor-pointer;
+}
+
+/* ===== Metric strip ===== */
+.metric-strip {
+  @apply grid gap-3 sm:grid-cols-2 lg:grid-cols-4;
+}
+
+.metric-tile {
+  @apply rounded-md border border-line bg-white px-4 py-3;
+  box-shadow: var(--shadow-card-sm);
+}
+
+.metric-tile-label {
+  @apply text-[11px] font-medium uppercase tracking-wide text-slate-500;
+}
+
+.metric-tile-value {
+  @apply mt-1 text-2xl font-semibold text-ink;
+}
+
+.metric-tile-hint {
+  @apply mt-1 text-xs text-slate-500;
+}
+
+/* ===== Definition list (dossier metadata) ===== */
+.dl-grid {
+  @apply grid gap-x-6 gap-y-3 sm:grid-cols-2 lg:grid-cols-3;
+}
+
+.dl-term {
+  @apply text-[11px] font-medium uppercase tracking-wide text-slate-500;
+}
+
+.dl-value {
+  @apply mt-0.5 break-words text-sm text-ink;
+}
+
+/* ===== Sidebar / rail section labels ===== */
+.rail-section-label {
+  @apply px-3 pb-1 pt-3 text-[11px] font-semibold uppercase tracking-wider text-slate-400;
 }
