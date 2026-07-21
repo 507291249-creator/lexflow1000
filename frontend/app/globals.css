@@ -3,15 +3,29 @@
 @tailwind utilities;
 
 :root {
-  --app-bg: #f4f7f9;
+  --app-bg: #F5F7F9;
   --surface: #ffffff;
   --surface-subtle: #f8fafb;
-  --ink: #172033;
-  --muted: #607086;
-  --line: #d8e0e8;
-  --court: #1f587c;
-  --court-hover: #174560;
-  --mint: #267466;
+  --ink: #111827;
+  --muted: #4B5563;
+  --line: #D8DEE6;
+  --court: #235F8C;
+  --court-hover: #173F5F;
+  --mint: #256B5A;
+  --primary-700: #173F5F;
+  --primary-100: #EAF2F8;
+  --success-700: #174F43;
+  --success-600: #256B5A;
+  --success-100: #E7F2EE;
+  --ai-700: #51446D;
+  --ai-600: #6A5A88;
+  --ai-100: #F1EEF6;
+  --ai-border: #D8D0E3;
+  --warning: #A86618;
+  --warning-bg: #FBF1DF;
+  --danger: #A83C38;
+  --danger-bg: #F8E9E7;
+  --inactive: #66717D;
   background: var(--app-bg);
   color: var(--ink);
 }
@@ -66,7 +80,7 @@ button, a { -webkit-tap-highlight-color: transparent; }
 }
 
 .top-nav-link-active {
-  @apply bg-[#eaf3f7] text-court;
+  @apply bg-[var(--primary-100)] text-[var(--court)];
 }
 
 .entity-code {
@@ -77,13 +91,13 @@ button, a { -webkit-tap-highlight-color: transparent; }
   @apply inline-flex shrink-0 items-center rounded px-2 py-1 text-xs font-medium;
 }
 
-.status-ai { @apply bg-sky-50 text-sky-700; }
-.status-pending { @apply bg-amber-50 text-amber-800; }
-.status-confirmed { @apply bg-emerald-50 text-emerald-700; }
-.status-rerun { @apply bg-orange-50 text-orange-700; }
-.status-expired { @apply bg-slate-100 text-slate-500; }
-.status-failed { @apply bg-rose-50 text-rose-700; }
-.status-unavailable { @apply bg-slate-100 text-slate-500; }
+.status-ai { @apply bg-[var(--ai-100)] text-[var(--ai-600)]; }
+.status-pending { @apply bg-[var(--warning-bg)] text-[var(--warning)]; }
+.status-confirmed { @apply bg-[var(--success-100)] text-[var(--success-600)]; }
+.status-rerun { @apply bg-[var(--warning-bg)] text-[var(--warning)]; }
+.status-expired { @apply bg-slate-100 text-[var(--inactive)]; }
+.status-failed { @apply bg-[var(--danger-bg)] text-[var(--danger)]; }
+.status-unavailable { @apply bg-slate-100 text-[var(--inactive)]; }
 
 .page-heading {
   @apply flex flex-wrap items-end justify-between gap-4 border-b border-line pb-5;
