@@ -16,7 +16,7 @@ import {
 } from "lucide-react";
 import { api, type CaseItem, type CaseWorkspace, type MemoryItem } from "@/lib/api";
 import { WORKFLOW_STEPS, getWorkflowStepState } from "@/lib/workflow-config";
-import { EntityCode, ErrorState, LoadingState, ReasoningStatusBadge } from "@/components/ui/ReasoningUI";
+import { EntityCode, LoadingState, ReasoningStatusBadge } from "@/components/ui/ReasoningUI";
 
 type CaseSnapshot = {
   stage: string;
