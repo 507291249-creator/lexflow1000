@@ -1,10 +1,11 @@
 import Link from "next/link";
-import { ArrowRight, ShieldCheck } from "lucide-react";
+import { ArrowLeft, ArrowRight, ShieldCheck } from "lucide-react";
 import { EmptyReasoningState, PageHeading } from "@/components/ui/ReasoningUI";
 
 export default function RedactionPage() {
   return (
     <div className="mx-auto max-w-5xl space-y-6">
+      <Link href="/research" className="inline-flex items-center gap-2 text-sm text-slate-600 hover:text-court"><ArrowLeft size={16} />返回法律研究</Link>
       <PageHeading
         eyebrow="法律 AI 分析安全边界"
         title="材料脱敏"

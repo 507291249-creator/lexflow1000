@@ -223,8 +223,8 @@ export function RedactionWorkspace({
       {!selectedRecord ? (
         <div className="empty-state"><ShieldOff size={21} /><div><div className="font-medium text-ink">尚未生成脱敏检测</div><p>先检测当前材料，系统会给出敏感项、替换建议和可人工调整的预览。</p></div><button className="button-primary" type="button" disabled={Boolean(busy)} onClick={() => void detect()}>开始检测</button></div>
       ) : (
-        <div className="grid gap-4 xl:grid-cols-[220px_minmax(0,1fr)_320px]">
-          <aside className="workspace-card h-fit xl:sticky xl:top-24">
+        <div className="grid min-w-0 gap-4 xl:grid-cols-[220px_minmax(0,1fr)_320px]">
+          <aside className="workspace-card h-fit min-w-0">
             <div className="flex items-center justify-between"><h3 className="font-semibold text-ink">敏感项</h3><ReasoningStatusBadge status={redactionStatus(selectedRecord)} /></div>
             <p className="mt-2 text-xs leading-5 text-slate-500">D-{selectedDocument?.id} · 脱敏版本 v{selectedRecord.version}</p>
             <div className="mt-4 space-y-2">
@@ -242,7 +242,7 @@ export function RedactionWorkspace({
             <div className="mt-5 rounded-md border border-dashed border-line bg-white p-3"><div className="flex items-center gap-2 text-sm font-medium text-ink"><Plus size={16} />人工新增敏感项</div><p className="mt-1 text-xs text-slate-500">填写原文中的起止位置；位置从 0 开始，可用于姓名、地址、项目或商业秘密等补充标记。</p><div className="mt-3 grid gap-2 sm:grid-cols-2"><input className="rounded-md border border-line px-3 py-2 text-sm" type="number" min="0" value={manualStart} onChange={(event) => setManualStart(Number(event.target.value))} placeholder="开始位置" /><input className="rounded-md border border-line px-3 py-2 text-sm" type="number" min="0" value={manualEnd} onChange={(event) => setManualEnd(Number(event.target.value))} placeholder="结束位置" /><select className="rounded-md border border-line px-3 py-2 text-sm" value={manualType} onChange={(event) => setManualType(event.target.value)}>{Object.entries(entityLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select><input className="rounded-md border border-line px-3 py-2 text-sm" value={manualReplacement} onChange={(event) => setManualReplacement(event.target.value)} placeholder="替换文本（可留空自动生成）" /></div><button className="button-secondary mt-3" type="button" disabled={Boolean(busy)} onClick={() => void addManualItem()}><Plus size={16} />新增敏感项</button></div>
           </main>
 
-          <aside className="workspace-card h-fit xl:sticky xl:top-24">
+          <aside className="workspace-card h-fit min-w-0">
             <div className="flex items-center justify-between gap-2"><div><h3 className="font-semibold text-ink">分析副本预览</h3><p className="mt-1 text-xs text-slate-500">仅此脱敏文本可被后续 AI 输入网关使用。</p></div><span className="entity-code">R-{String(selectedRecord.version).padStart(2, "0")}</span></div>
             <div className="mt-4 space-y-2 text-sm"><SendRow label="原始材料" value="不会发送" /><SendRow label="脱敏文本" value={selectedRecord.status === "confirmed" ? "已确认，可作为后续候选输入" : "当前内容尚未发送给 AI"} good={selectedRecord.status === "confirmed"} /><SendRow label="主体映射" value="不会发送，仅保留替换别名" /><SendRow label="原始文件" value="不会发送" /></div>
             <button className="button-secondary mt-4 w-full" type="button" onClick={() => setShowAiText((value) => !value)}><Eye size={16} />{showAiText ? "收起完整内容" : "查看将发送给 AI 的完整内容"}</button>

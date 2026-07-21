@@ -1,6 +1,7 @@
 "use client";
 
-import { BriefcaseBusiness, RefreshCw } from "lucide-react";
+import Link from "next/link";
+import { ArrowLeft, BriefcaseBusiness, RefreshCw } from "lucide-react";
 import type { CaseWorkspace } from "@/lib/api";
 import { getWorkflowStepConfig, type WorkflowStepCode } from "@/lib/workflow-config";
 import { EntityCode } from "@/components/ui/ReasoningUI";
@@ -25,6 +26,15 @@ export function CaseHeader({
 
   return (
     <header className="rounded-lg border border-line bg-white shadow-sm">
+      {/* Breadcrumb / back to cases */}
+      <div className="flex items-center gap-2 border-b border-line-subtle px-5 py-2 text-xs text-slate-500">
+        <Link href="/cases" className="inline-flex items-center gap-1 rounded px-1 py-0.5 font-medium text-slate-500 transition hover:text-court">
+          <ArrowLeft size={13} />
+          案件工作区
+        </Link>
+        <span className="text-slate-300">/</span>
+        <span className="truncate text-slate-700">{item.title}</span>
+      </div>
       <div className="flex flex-wrap items-start justify-between gap-4 px-5 py-4">
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">

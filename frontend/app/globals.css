@@ -4,52 +4,61 @@
 
 :root {
   /* ===== Surfaces & ink ===== */
-  --app-bg: #F3F5F8;
+  --app-bg: #F4F6F9;
   --surface: #ffffff;
-  --surface-subtle: #F6F8FA;
-  --surface-sunken: #EEF1F4;
-  --ink: #0F1B2D;
-  --ink-subtle: #2A3A4F;
+  --surface-subtle: #F7F9FB;
+  --surface-sunken: #EEF2F6;
+  --ink: #0C1A2B;
+  --ink-subtle: #26384F;
   --muted: #4B5663;
-  --line: #D7DEE6;
-  --line-subtle: #E6EBF1;
+  --line: #D5DEE9;
+  --line-subtle: #E8EDF3;
 
   /* ===== Primary / court (blue) — flow, nav, primary action, current context ===== */
-  --court: #1F5A88;
-  --court-hover: #194A6E;
-  --court-subtle: #E8F0F7;
-  --court-border: #BFD3E2;
-  --primary-700: #194A6E;
-  --primary-600: #1F5A88;
-  --primary-100: #E8F0F7;
+  --court: #1A5A9C;
+  --court-hover: #164A80;
+  --court-subtle: #E7F0FA;
+  --court-border: #BDD5EA;
+  --primary-700: #164A80;
+  --primary-600: #1A5A9C;
+  --primary-100: #E7F0FA;
 
   /* ===== Mint (teal-green) — human confirmed, valid, trusted ===== */
-  --mint: #1F6B5A;
-  --mint-subtle: #E6F1ED;
-  --mint-border: #BFDDD2;
-  --success-700: #174F43;
-  --success-600: #1F6B5A;
-  --success-100: #E6F1ED;
+  --mint: #137A69;
+  --mint-subtle: #E3F2EF;
+  --mint-border: #B4DCD2;
+  --success-700: #0F5A4C;
+  --success-600: #137A69;
+  --success-100: #E3F2EF;
 
   /* ===== AI (desaturated purple) — AI output, reasoning, model info ===== */
-  --ai-700: #4E426A;
-  --ai-600: #5E5180;
-  --ai-100: #F0EDF6;
-  --ai-border: #D6CFE2;
+  --ai-700: #4A3F73;
+  --ai-600: #5C4F8C;
+  --ai-100: #EFEDF7;
+  --ai-border: #D3CCE3;
 
   /* ===== Warning (amber) — pending, caution ===== */
-  --warning: #9A5E16;
-  --warning-bg: #FBF1DF;
-  --warning-border: #EBD6A8;
+  --warning: #955A14;
+  --warning-bg: #FBF1DE;
+  --warning-border: #EBD5A6;
 
   /* ===== Danger (dark red) — failure, reject, destructive ===== */
-  --danger: #9E3733;
+  --danger: #A03631;
   --danger-bg: #F7E9E7;
   --danger-border: #E6C6C3;
 
   /* ===== Inactive (neutral gray) — history, expired, disabled, auxiliary ===== */
-  --inactive: #69737E;
-  --inactive-subtle: #E7EAEE;
+  --inactive: #6B7682;
+  --inactive-subtle: #E8EBEF;
+
+  /* ===== Sidebar (deep navy) — pro workbench chrome ===== */
+  --sidebar-bg: #0E1F33;
+  --sidebar-bg-elevated: #15293F;
+  --sidebar-text: #9FB2C9;
+  --sidebar-text-active: #ffffff;
+  --sidebar-border: rgba(255, 255, 255, 0.08);
+  --sidebar-hover: rgba(255, 255, 255, 0.06);
+  --sidebar-accent: #2F7DC0;
 
   /* ===== Typography ===== */
   --text-xs: 0.6875rem;
@@ -73,9 +82,9 @@
   --spacing-8: 2rem;
 
   /* ===== Shadows — restrained, professional ===== */
-  --shadow-card-sm: 0 1px 2px rgba(15, 27, 45, 0.04);
-  --shadow-card: 0 1px 2px rgba(15, 27, 45, 0.05), 0 1px 1px rgba(15, 27, 45, 0.03);
-  --shadow-card-lg: 0 2px 8px rgba(15, 27, 45, 0.07);
+  --shadow-card-sm: 0 1px 2px rgba(12, 26, 43, 0.05);
+  --shadow-card: 0 1px 2px rgba(12, 26, 43, 0.06), 0 1px 1px rgba(12, 26, 43, 0.03);
+  --shadow-card-lg: 0 4px 14px rgba(12, 26, 43, 0.08);
   --shadow-rail: 0 0 0 1px var(--line);
 
   background: var(--app-bg);
@@ -110,11 +119,14 @@ button, a { -webkit-tap-highlight-color: transparent; }
 }
 
 .app-sidebar {
-  @apply hidden lg:flex lg:fixed lg:inset-y-0 lg:left-0 lg:w-60 lg:flex-col lg:border-r lg:border-line lg:bg-white;
+  @apply hidden lg:flex lg:fixed lg:inset-y-0 lg:left-0 lg:w-60 lg:flex-col;
+  background: var(--sidebar-bg);
+  border-right: 1px solid var(--sidebar-border);
 }
 
 .app-sidebar-brand {
-  @apply flex items-center gap-3 px-5 h-16 border-b border-line;
+  @apply flex items-center gap-3 px-5 h-16;
+  border-bottom: 1px solid var(--sidebar-border);
 }
 
 .app-sidebar-nav {
@@ -122,7 +134,8 @@ button, a { -webkit-tap-highlight-color: transparent; }
 }
 
 .app-sidebar-footer {
-  @apply border-t border-line px-5 py-3;
+  @apply px-5 py-3;
+  border-top: 1px solid var(--sidebar-border);
 }
 
 .app-main {
@@ -130,7 +143,9 @@ button, a { -webkit-tap-highlight-color: transparent; }
 }
 
 .app-topbar {
-  @apply lg:hidden sticky top-0 z-40 border-b border-line bg-white;
+  @apply lg:hidden sticky top-0 z-40 h-14;
+  background: var(--sidebar-bg);
+  border-bottom: 1px solid var(--sidebar-border);
 }
 
 .app-content {
@@ -139,13 +154,34 @@ button, a { -webkit-tap-highlight-color: transparent; }
 
 /* Sidebar nav link */
 .side-link {
-  @apply flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium text-slate-600 transition hover:bg-[var(--surface-subtle)] hover:text-ink;
+  @apply flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition;
+  color: var(--sidebar-text);
+}
+.side-link:hover {
+  background: var(--sidebar-hover);
+  color: var(--sidebar-text-active);
 }
 .side-link-active {
-  @apply bg-[var(--court-subtle)] text-[var(--court)];
+  @apply relative;
+  background: var(--sidebar-hover);
+  color: var(--sidebar-text-active);
+}
+.side-link-active::before {
+  content: "";
+  @apply absolute left-0 top-1.5 bottom-1.5 w-0.5 rounded-full;
+  background: var(--sidebar-accent);
 }
 .side-link-disabled {
-  @apply cursor-not-allowed opacity-60 hover:bg-transparent hover:text-slate-600;
+  @apply cursor-not-allowed opacity-60;
+}
+.side-link-disabled:hover {
+  background: transparent;
+  color: var(--sidebar-text);
+}
+
+/* Sidebar section label adapts to dark chrome */
+.app-sidebar .rail-section-label {
+  color: rgba(159, 178, 201, 0.7);
 }
 
 /* ===== Cards ===== */

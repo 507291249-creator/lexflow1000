@@ -67,7 +67,7 @@ export function ContextRail({ workspace, activeStep }: { workspace: CaseWorkspac
           })}
         </div>
       </div>
-      <div className="max-h-[calc(100vh-190px)] overflow-y-auto p-4">
+      <div className="p-4">
         {activeTab === "materials" && (
           <div className="space-y-3">
             {!workspace.documents.length && <ContextPlaceholder title="暂无材料" description="上传案件材料后将在此形成引用入口。" />}

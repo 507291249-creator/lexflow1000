@@ -19,15 +19,21 @@ export function ReasoningWorkbenchLayout({
   const [contextOpen, setContextOpen] = useState(false);
 
   return (
-    <div className="space-y-4">
-      {header}
+    <div className="space-y-4 lg:flex lg:h-[calc(100vh-2.5rem)] lg:flex-col lg:gap-4 lg:space-y-0 lg:overflow-hidden">
+      {/* Case header — fixed, does not scroll with the rails */}
+      <div className="lg:shrink-0">{header}</div>
+
+      {/* Mobile horizontal workflow navigator */}
       <div className="lg:hidden">{mobileNavigator}</div>
-      <div className="grid min-w-0 gap-4 lg:grid-cols-[260px_minmax(0,1fr)] lg:items-start xl:grid-cols-[280px_minmax(0,1fr)_360px]">
-        <aside className="hidden lg:sticky lg:top-20 lg:block">{reasoningRail}</aside>
-        <main className="min-w-0 space-y-4">{children}</main>
-        <aside className="hidden xl:sticky xl:top-20 xl:block">{contextRail}</aside>
+
+      {/* Independent scroll regions: reasoning rail | main | context rail */}
+      <div className="grid min-w-0 gap-4 lg:min-h-0 lg:flex-1 lg:grid-cols-[260px_minmax(0,1fr)] lg:overflow-hidden xl:grid-cols-[280px_minmax(0,1fr)_360px]">
+        <aside className="hidden lg:block lg:min-h-0 lg:overflow-y-auto lg:pr-1">{reasoningRail}</aside>
+        <main className="min-w-0 space-y-4 lg:min-h-0 lg:overflow-y-auto lg:pr-1">{children}</main>
+        <aside className="hidden xl:block xl:min-h-0 xl:overflow-y-auto xl:pl-1">{contextRail}</aside>
       </div>
 
+      {/* Context rail access on screens without the persistent context column */}
       <button
         type="button"
         className="button-primary fixed bottom-5 right-5 z-30 shadow-lg xl:hidden"
