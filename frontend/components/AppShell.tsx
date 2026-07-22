@@ -30,7 +30,7 @@ const NAV: NavItem[] = [
 function Brand({ compact = false }: { compact?: boolean }) {
   return (
     <Link href="/" className="flex min-w-0 items-center gap-3 py-1">
-      <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-[var(--court)] text-white text-sm font-semibold">LF</span>
+      <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-[var(--court-strong)] text-white text-sm font-semibold">LF</span>
       {!compact && (
         <span className="min-w-0">
           <span className="block truncate text-sm font-semibold text-ink">LexFlow</span>

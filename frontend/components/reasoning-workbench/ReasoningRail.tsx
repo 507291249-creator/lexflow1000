@@ -63,7 +63,7 @@ export function ReasoningRail({
                 onClick={() => step.implemented && onChange(step.code)}
                 className={`relative flex w-full gap-3 rounded-md px-2 py-3 text-left transition ${active ? "bg-[var(--court-subtle)]" : step.implemented ? "hover:bg-[var(--surface-subtle)]" : "cursor-default opacity-70"}`}
               >
-                <span className={`relative z-10 flex h-9 w-9 shrink-0 items-center justify-center rounded-full border ${active ? "border-court bg-court text-white" : "border-line bg-white text-slate-500"}`}>
+                <span className={`relative z-10 flex h-9 w-9 shrink-0 items-center justify-center rounded-full border ${active ? "border-[var(--court-strong)] bg-[var(--court-strong)] text-white" : "border-line bg-white text-slate-500"}`}>
                   <Icon size={16} />
                 </span>
                 <span className="min-w-0 flex-1">

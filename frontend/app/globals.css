@@ -3,61 +3,65 @@
 @tailwind utilities;
 
 :root {
-  /* ===== Surfaces & ink — cool slate ramp, single undertone ===== */
-  --app-bg: #F5F7FA;
-  --surface: #ffffff;
-  --surface-subtle: #F8FAFC;
-  --surface-sunken: #EEF2F7;
-  --ink: #0F1E2E;
-  --ink-subtle: #334155;
-  --muted: #475569;
-  --line: #E2E8F0;
-  --line-subtle: #EDF1F6;
+  color-scheme: dark;
 
-  /* ===== Primary / court (blue) — the single hero accent ===== */
-  --court: #1E5FB0;
-  --court-hover: #194F94;
-  --court-subtle: #EAF2FB;
-  --court-border: #C3D8EE;
-  --primary-700: #194F94;
-  --primary-600: #1E5FB0;
-  --primary-100: #EAF2FB;
+  /* ===== Surfaces & ink — deep navy ground, single blue undertone ===== */
+  --app-bg: #0E1A2B;
+  --surface: #16243A;
+  --surface-subtle: #1C2D45;
+  --surface-sunken: #111E30;
+  --ink: #E8EEF7;
+  --ink-subtle: #B3C0D2;
+  --muted: #8B9BB2;
+  --faint: #64748B;
+  --line: #283A52;
+  --line-subtle: #1F3050;
 
-  /* ===== Mint (teal-green) — human confirmed, valid, trusted ===== */
-  --mint: #0E7C6A;
-  --mint-subtle: #E2F3EF;
-  --mint-border: #B3DDD2;
-  --success-700: #0B5E50;
-  --success-600: #0E7C6A;
-  --success-100: #E2F3EF;
+  /* ===== Court (blue) — luminous azure for text/accents, deep blue for fills ===== */
+  --court: #6CA4E0;
+  --court-strong: #2F6FB3;
+  --court-hover: #3B7DC9;
+  --court-subtle: #15324A;
+  --court-border: #2B4D72;
+  --primary-700: #2F6FB3;
+  --primary-600: #3B7DC9;
+  --primary-100: #15324A;
+
+  /* ===== Mint (ink-green) — human confirmed, valid, trusted ===== */
+  --mint: #3DBFA0;
+  --mint-subtle: #0F2E27;
+  --mint-border: #1E4A3F;
+  --success-700: #2A9D7E;
+  --success-600: #3DBFA0;
+  --success-100: #0F2E27;
 
   /* ===== AI (indigo-purple) — AI output, reasoning, model info ===== */
-  --ai-700: #4A3F73;
-  --ai-600: #6B5BB1;
-  --ai-100: #F0EDF8;
-  --ai-border: #D4CCE7;
+  --ai-700: #6B5BA0;
+  --ai-600: #A99BD9;
+  --ai-100: #221D38;
+  --ai-border: #3D3460;
 
   /* ===== Warning (amber) — pending, caution ===== */
-  --warning: #955A14;
-  --warning-bg: #FBF1DE;
-  --warning-border: #EBD5A6;
+  --warning: #E0A24A;
+  --warning-bg: #332614;
+  --warning-border: #5C4220;
 
-  /* ===== Danger (dark red) — failure, reject, destructive ===== */
-  --danger: #A02F2A;
-  --danger-bg: #F8E8E6;
-  --danger-border: #E4C5C1;
+  /* ===== Danger (red) — failure, reject, destructive ===== */
+  --danger: #E06560;
+  --danger-bg: #331816;
+  --danger-border: #5C2A26;
 
   /* ===== Inactive (slate) — history, expired, disabled, auxiliary ===== */
-  --inactive: #64748B;
-  --inactive-subtle: #E8EDF3;
+  --inactive: #7A8A9E;
+  --inactive-subtle: #1F2A38;
 
-  /* ===== Sidebar chrome — light, tied to the same blue family ===== */
-  --sidebar-bg: #ffffff;
-  --sidebar-text: #475569;
-  --sidebar-text-active: #1E5FB0;
-  --sidebar-border: #E2E8F0;
-  --sidebar-hover: #F1F5F9;
-  --sidebar-accent: #1E5FB0;
+  /* ===== Sidebar chrome — deep navy, tied to the same blue family ===== */
+  --sidebar-bg: #0B1626;
+  --sidebar-text: #8B9BB2;
+  --sidebar-text-active: #6CA4E0;
+  --sidebar-border: #283A52;
+  --sidebar-hover: #16243A;
+  --sidebar-accent: #6CA4E0;
 
   /* ===== Typography ===== */
   --text-xs: 0.6875rem;
@@ -80,10 +84,10 @@
   --spacing-6: 1.5rem;
   --spacing-8: 2rem;
 
-  /* ===== Shadows — restrained, professional ===== */
-  --shadow-card-sm: 0 1px 2px rgba(15, 30, 46, 0.05);
-  --shadow-card: 0 1px 2px rgba(15, 30, 46, 0.06), 0 1px 1px rgba(15, 30, 46, 0.03);
-  --shadow-card-lg: 0 4px 14px rgba(15, 30, 46, 0.08);
+  /* ===== Shadows — subtle, dark ===== */
+  --shadow-card-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
+  --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.35), 0 1px 1px rgba(0, 0, 0, 0.2);
+  --shadow-card-lg: 0 6px 18px rgba(0, 0, 0, 0.45);
   --shadow-rail: 0 0 0 1px var(--line);
 
   background: var(--app-bg);
@@ -101,11 +105,22 @@ body {
 
 textarea, input, select {
   outline: none;
+  color: var(--ink);
+  background-color: var(--surface);
+}
+
+textarea::placeholder, input::placeholder {
+  color: var(--muted);
+}
+
+select option {
+  background-color: var(--surface);
+  color: var(--ink);
 }
 
 textarea:focus, input:focus, select:focus {
   border-color: var(--court);
-  box-shadow: 0 0 0 3px rgba(31, 90, 136, 0.12);
+  box-shadow: 0 0 0 3px rgba(108, 164, 224, 0.18);
 }
 
 button, a { -webkit-tap-highlight-color: transparent; }
@@ -139,7 +154,7 @@ button, a { -webkit-tap-highlight-color: transparent; }
 }
 
 .app-topbar {
-  @apply lg:hidden sticky top-0 z-40 h-14 border-b border-line bg-white;
+  @apply lg:hidden sticky top-0 z-40 h-14 border-b border-line bg-[var(--surface)];
 }
 
 .app-content {
@@ -175,17 +190,17 @@ button, a { -webkit-tap-highlight-color: transparent; }
 
 /* ===== Cards ===== */
 .card {
-  @apply rounded-lg border border-line bg-white;
+  @apply rounded-lg border border-line bg-[var(--surface)];
   box-shadow: var(--shadow-card);
 }
 
 .card-sm {
-  @apply rounded-md border border-line bg-white p-3;
+  @apply rounded-md border border-line bg-[var(--surface)] p-3;
   box-shadow: var(--shadow-card-sm);
 }
 
 .card-compact {
-  @apply rounded-md border border-line bg-white;
+  @apply rounded-md border border-line bg-[var(--surface)];
   box-shadow: var(--shadow-card-sm);
 }
 
@@ -199,11 +214,11 @@ button, a { -webkit-tap-highlight-color: transparent; }
 }
 
 .button-primary {
-  @apply button bg-court text-white hover:bg-[var(--court-hover)];
+  @apply button bg-[var(--court-strong)] text-white hover:bg-[var(--court-hover)];
 }
 
 .button-secondary {
-  @apply button border border-line bg-white text-ink hover:bg-[var(--surface-subtle)];
+  @apply button border border-line bg-[var(--surface)] text-ink hover:bg-[var(--surface-subtle)];
 }
 
 .button-ghost {
@@ -211,7 +226,7 @@ button, a { -webkit-tap-highlight-color: transparent; }
 }
 
 .button-danger {
-  @apply button border border-[var(--danger-border)] bg-white text-[var(--danger)] hover:bg-[var(--danger-bg)];
+  @apply button border border-[var(--danger-border)] bg-[var(--surface)] text-[var(--danger)] hover:bg-[var(--danger-bg)];
 }
 
 /* ===== Badges ===== */
@@ -246,7 +261,7 @@ button, a { -webkit-tap-highlight-color: transparent; }
 }
 
 .page-heading h1 { @apply mt-1 text-2xl font-semibold text-ink; }
-.page-heading p { @apply mt-2 max-w-3xl text-sm leading-6 text-slate-600; }
+.page-heading p { @apply mt-2 max-w-3xl text-sm leading-6 text-[var(--ink-subtle)]; }
 .page-eyebrow { @apply text-xs font-semibold text-[var(--court)] uppercase tracking-wide; }
 
 /* ===== Workspace header ===== */
@@ -255,30 +270,30 @@ button, a { -webkit-tap-highlight-color: transparent; }
 }
 
 .workspace-header h1 { @apply text-2xl font-semibold text-ink; }
-.workspace-header p { @apply mt-1 text-sm text-slate-500 max-w-2xl; }
+.workspace-header p { @apply mt-1 text-sm text-[var(--muted)] max-w-2xl; }
 
 /* ===== Feedback states ===== */
 .feedback-state {
-  @apply flex min-h-16 items-center gap-3 rounded-md border border-line bg-white px-4 py-3 text-sm text-slate-600;
+  @apply flex min-h-16 items-center gap-3 rounded-md border border-line bg-[var(--surface)] px-4 py-3 text-sm text-[var(--ink-subtle)];
 }
 
 .empty-state {
-  @apply flex min-h-28 flex-col items-center justify-center gap-3 rounded-md border border-dashed border-line bg-[var(--surface-subtle)] px-5 py-6 text-center text-slate-400;
+  @apply flex min-h-28 flex-col items-center justify-center gap-3 rounded-md border border-dashed border-line bg-[var(--surface-subtle)] px-5 py-6 text-center text-[var(--faint)];
 }
 
-.empty-state p { @apply mt-1 max-w-xl text-sm leading-6 text-slate-500; }
+.empty-state p { @apply mt-1 max-w-xl text-sm leading-6 text-[var(--muted)]; }
 
 /* ===== Reasoning cards ===== */
 .reasoning-card {
-  @apply rounded-lg border border-line bg-white p-4;
+  @apply rounded-lg border border-line bg-[var(--surface)] p-4;
 }
 
 .reasoning-card-compact {
-  @apply rounded-md border border-line bg-white p-4;
+  @apply rounded-md border border-line bg-[var(--surface)] p-4;
 }
 
 .metric-card {
-  @apply rounded-md border border-line bg-white p-4;
+  @apply rounded-md border border-line bg-[var(--surface)] p-4;
 }
 
 /* ===== Data table ===== */
@@ -287,7 +302,7 @@ button, a { -webkit-tap-highlight-color: transparent; }
 }
 
 .data-table thead th {
-  @apply px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider border-b border-line;
+  @apply px-4 py-3 text-left text-xs font-semibold text-[var(--muted)] uppercase tracking-wider border-b border-line;
 }
 
 .data-table tbody tr {
@@ -313,7 +328,7 @@ button, a { -webkit-tap-highlight-color: transparent; }
 
 /* ===== Workbench layout ===== */
 .workbench-sidebar {
-  @apply hidden md:flex w-64 flex-col border-r border-line bg-white;
+  @apply hidden md:flex w-64 flex-col border-r border-line bg-[var(--surface)];
 }
 
 .workbench-main {
@@ -361,12 +376,12 @@ button, a { -webkit-tap-highlight-color: transparent; }
 
 /* ===== Case workspace components ===== */
 .workspace-card {
-  @apply rounded-lg border border-line bg-white p-4;
+  @apply rounded-lg border border-line bg-[var(--surface)] p-4;
   box-shadow: var(--shadow-card-sm);
 }
 
 .workspace-card-flush {
-  @apply rounded-lg border border-line bg-white;
+  @apply rounded-lg border border-line bg-[var(--surface)];
   box-shadow: var(--shadow-card-sm);
 }
 
@@ -379,11 +394,11 @@ button, a { -webkit-tap-highlight-color: transparent; }
 }
 
 .section-header p {
-  @apply mt-1 text-xs leading-5 text-slate-500;
+  @apply mt-1 text-xs leading-5 text-[var(--muted)];
 }
 
 .version-chip {
-  @apply inline-flex shrink-0 items-center gap-1 rounded border border-line bg-[var(--surface-subtle)] px-1.5 py-0.5 text-[11px] font-medium text-slate-600;
+  @apply inline-flex shrink-0 items-center gap-1 rounded border border-line bg-[var(--surface-subtle)] px-1.5 py-0.5 text-[11px] font-medium text-[var(--ink-subtle)];
 }
 
 .version-chip-court {
@@ -391,7 +406,7 @@ button, a { -webkit-tap-highlight-color: transparent; }
 }
 
 .source-tag {
-  @apply inline-flex shrink-0 items-center gap-1 rounded bg-[var(--surface-subtle)] px-1.5 py-0.5 text-[11px] text-slate-500;
+  @apply inline-flex shrink-0 items-center gap-1 rounded bg-[var(--surface-subtle)] px-1.5 py-0.5 text-[11px] text-[var(--muted)];
 }
 
 /* AI vs human content surfaces */
@@ -413,11 +428,11 @@ button, a { -webkit-tap-highlight-color: transparent; }
 }
 
 .trace-diff-ai {
-  @apply max-h-72 overflow-auto whitespace-pre-wrap rounded-md border border-[var(--ai-border)] bg-[var(--ai-100)] p-3 text-xs leading-5 text-slate-700;
+  @apply max-h-72 overflow-auto whitespace-pre-wrap rounded-md border border-[var(--ai-border)] bg-[var(--ai-100)] p-3 text-xs leading-5 text-[var(--ink)];
 }
 
 .trace-diff-human {
-  @apply max-h-72 overflow-auto whitespace-pre-wrap rounded-md border border-[var(--mint-border)] bg-[var(--mint-subtle)] p-3 text-xs leading-5 text-slate-700;
+  @apply max-h-72 overflow-auto whitespace-pre-wrap rounded-md border border-[var(--mint-border)] bg-[var(--mint-subtle)] p-3 text-xs leading-5 text-[var(--ink)];
 }
 
 .rail-node-active {
@@ -426,7 +441,7 @@ button, a { -webkit-tap-highlight-color: transparent; }
 
 /* ===== Work queue table (cases) ===== */
 .work-queue {
-  @apply overflow-hidden rounded-lg border border-line bg-white;
+  @apply overflow-hidden rounded-lg border border-line bg-[var(--surface)];
   box-shadow: var(--shadow-card-sm);
 }
 
@@ -435,7 +450,7 @@ button, a { -webkit-tap-highlight-color: transparent; }
 }
 
 .work-queue thead th {
-  @apply px-4 py-3 text-left text-[11px] font-semibold uppercase tracking-wider text-slate-500 bg-[var(--surface-subtle)] border-b border-line;
+  @apply px-4 py-3 text-left text-[11px] font-semibold uppercase tracking-wider text-[var(--muted)] bg-[var(--surface-subtle)] border-b border-line;
 }
 
 .work-queue tbody tr {
@@ -456,12 +471,12 @@ button, a { -webkit-tap-highlight-color: transparent; }
 }
 
 .metric-tile {
-  @apply rounded-md border border-line bg-white px-4 py-3;
+  @apply rounded-md border border-line bg-[var(--surface)] px-4 py-3;
   box-shadow: var(--shadow-card-sm);
 }
 
 .metric-tile-label {
-  @apply text-[11px] font-medium uppercase tracking-wide text-slate-500;
+  @apply text-[11px] font-medium uppercase tracking-wide text-[var(--muted)];
 }
 
 .metric-tile-value {
@@ -469,7 +484,7 @@ button, a { -webkit-tap-highlight-color: transparent; }
 }
 
 .metric-tile-hint {
-  @apply mt-1 text-xs text-slate-500;
+  @apply mt-1 text-xs text-[var(--muted)];
 }
 
 /* ===== Definition list (dossier metadata) ===== */
@@ -478,7 +493,7 @@ button, a { -webkit-tap-highlight-color: transparent; }
 }
 
 .dl-term {
-  @apply text-[11px] font-medium uppercase tracking-wide text-slate-500;
+  @apply text-[11px] font-medium uppercase tracking-wide text-[var(--muted)];
 }
 
 .dl-value {
@@ -487,5 +502,15 @@ button, a { -webkit-tap-highlight-color: transparent; }
 
 /* ===== Sidebar / rail section labels ===== */
 .rail-section-label {
-  @apply px-3 pb-1 pt-3 text-[11px] font-semibold uppercase tracking-wider text-slate-400;
+  @apply px-3 pb-1 pt-3 text-[11px] font-semibold uppercase tracking-wider text-[var(--faint)];
 }
+
+/* ===== Dark-theme shim — remap light-theme utility primitives used inline in components ===== */
+/* Unlayered rules beat Tailwind's layered utilities, so inline bg-white / text-slate-* in
+   component JSX inherit the dark token values without per-file edits. */
+.bg-white { background-color: var(--surface); }
+.text-slate-700 { color: var(--ink); }
+.text-slate-600 { color: var(--ink-subtle); }
+.text-slate-500 { color: var(--muted); }
+.text-slate-400 { color: var(--faint); }
+.text-slate-300 { color: var(--faint); }
