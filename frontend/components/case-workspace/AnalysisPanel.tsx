@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { Check, History, Play, RefreshCw, Sparkles } from "lucide-react";
-import type { AIOutput, CaseWorkspace, MemoryItem, WorkUnit } from "@/lib/api";
+import { operationId, type AIOutput, type CaseWorkspace, type MemoryItem, type WorkUnit } from "@/lib/api";
 import { getWorkflowStepConfig } from "@/lib/workflow-config";
 import { EntityCode } from "@/components/ui/ReasoningUI";
 import { EmptyState, formatUnknown, PanelHeading, StatusBadge } from "./shared";
@@ -47,9 +47,9 @@ function AnalysisVersionHistory({ outputs }: { outputs: AIOutput[] }) {
       <button type="button" className="flex w-full items-center justify-between gap-2 px-3 py-2 text-left" onClick={() => setOpen((value) => !value)}>
         <span className="flex items-center gap-2 text-xs font-medium text-slate-600">
           <History size={14} className="text-slate-400" />
-          分析版本谱系
+          分析生成历史
         </span>
-        <span className="text-[11px] text-slate-500">{outputs.length} 个版本 · 当前 V{outputs[0].version}</span>
+        <span className="text-[11px] text-slate-500">{outputs.length} 次生成 · 最新 G{outputs[0].version}</span>
       </button>
       {open && (
         <div className="border-t border-line-subtle px-3 py-3">
@@ -61,7 +61,7 @@ function AnalysisVersionHistory({ outputs }: { outputs: AIOutput[] }) {
                 onClick={() => setActiveId(item.id)}
                 className={`version-chip ${item.id === active.id ? "version-chip-court" : ""}`}
               >
-                <span className="text-slate-400">V</span>
+                <span className="text-slate-400">生成 G</span>
                 <span className="font-semibold">{item.version}</span>
                 {item.fact_version !== undefined && <span className="ml-1 text-[10px] text-slate-400">F{item.fact_version}</span>}
               </button>
@@ -128,6 +128,10 @@ function AiAnalysisUnits({ caseId, workspace, busy, request }: { caseId: number;
   }, [units, outputsByUnit, workspace.case.fact_version, workspace.case.issue_version]);
 
   const pending = units.filter((unit) => currentByUnit.get(unit.id)?.review_status === "待复核");
+  const publishableIds = units
+    .map((unit) => currentByUnit.get(unit.id))
+    .filter((output): output is AIOutput => Boolean(output) && ["已接受", "已修改"].includes(output!.review_status))
+    .map((output) => output.id);
 
   return (
     <div className="space-y-4">
@@ -139,6 +143,22 @@ function AiAnalysisUnits({ caseId, workspace, busy, request }: { caseId: number;
             onClick={() => request(`/cases/${caseId}/analyses/confirm-all`, "POST", { reason: "人工复核当前版本法律分析后批量接受，后续按需逐项修订。" })}
           >
             <Check size={16} />一键接受全部分析
+          </button>
+        </div>
+      )}
+      {publishableIds.length > 0 && pending.length === 0 && (
+        <div className="flex flex-wrap items-center justify-end gap-2">
+          <span className="version-chip version-chip-court"><span className="text-slate-400">正式分析</span><span className="font-semibold">{workspace.case.analysis_version > 0 ? `V${workspace.case.analysis_version}` : "未发布"}</span></span>
+          <button
+            className="button-primary"
+            disabled={Boolean(busy) || workspace.case.fact_version <= 0 || workspace.case.issue_version <= 0}
+            onClick={() => request(`/cases/${caseId}/analyses/publish`, "POST", {
+              analysis_ids: publishableIds,
+              operation_id: operationId(`analyses-${caseId}`),
+              reason: "人工复核当前法律分析集合后正式发布。",
+            })}
+          >
+            <Check size={16} />正式发布分析
           </button>
         </div>
       )}
@@ -164,7 +184,8 @@ function AiAnalysisUnits({ caseId, workspace, busy, request }: { caseId: number;
                     <span className="version-chip"><span className="text-slate-400">争点</span><span className="font-semibold">V{workspace.case.issue_version}</span></span>
                     {output && (
                       <>
-                        <span className="version-chip"><span className="text-slate-400">分析</span><span className="font-semibold">V{output.version}</span></span>
+                        <span className="version-chip"><span className="text-slate-400">生成</span><span className="font-semibold">G{output.version}</span></span>
+                        <span className="version-chip"><span className="text-slate-400">正式分析</span><span className="font-semibold">{output.analysis_version > 0 ? `V${output.analysis_version}` : "未发布"}</span></span>
                         <span className={`status-badge ${output.execution_mode === "llm" ? "bg-[var(--ai-100)] text-[var(--ai-600)]" : "bg-[var(--inactive-subtle)] text-[var(--inactive)]"}`}>
                           {output.execution_mode === "llm" ? "大模型" : "备用模式"}
                         </span>

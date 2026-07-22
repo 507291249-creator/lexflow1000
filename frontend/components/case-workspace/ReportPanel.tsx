@@ -1,8 +1,8 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { FileText, History } from "lucide-react";
-import type { AIOutput, CaseWorkspace } from "@/lib/api";
+import { Check, FileText, History } from "lucide-react";
+import { operationId, type AIOutput, type CaseWorkspace } from "@/lib/api";
 import { getWorkflowStepConfig } from "@/lib/workflow-config";
 import { EntityCode } from "@/components/ui/ReasoningUI";
 import { EmptyState, PanelHeading, StatusBadge } from "./shared";
@@ -47,9 +47,9 @@ function ReportVersionHistory({ outputs, current }: { outputs: AIOutput[]; curre
       <button type="button" className="flex w-full items-center justify-between gap-2 px-3 py-2 text-left" onClick={() => setOpen((value) => !value)}>
         <span className="flex items-center gap-2 text-xs font-medium text-slate-600">
           <History size={14} className="text-slate-400" />
-          报告版本谱系
+          报告生成历史
         </span>
-        <span className="text-[11px] text-slate-500">{outputs.length} 个版本 · 当前 V{current?.version ?? outputs[0].version}</span>
+        <span className="text-[11px] text-slate-500">{outputs.length} 次生成 · 最新 G{current?.version ?? outputs[0].version}</span>
       </button>
       {open && (
         <div className="border-t border-line-subtle px-3 py-3">
@@ -61,7 +61,7 @@ function ReportVersionHistory({ outputs, current }: { outputs: AIOutput[]; curre
                 onClick={() => setActiveId(item.id)}
                 className={`version-chip ${item.id === active.id ? "version-chip-court" : ""}`}
               >
-                <span className="text-slate-400">V</span>
+                <span className="text-slate-400">生成 G</span>
                 <span className="font-semibold">{item.version}</span>
                 <span className="ml-1 text-[10px] text-slate-400">F{item.fact_version}/I{item.issue_version}</span>
               </button>
@@ -97,7 +97,7 @@ export function ReportPanel({ caseId, workspace, busy, request }: { caseId: numb
   const approved = workspace.ai_outputs.filter(
     (output) => output.output_type === "legal_analysis" && output.fact_version === workspace.case.fact_version && output.issue_version === workspace.case.issue_version && ["已接受", "已修改"].includes(output.review_status),
   ).length;
-  const ready = workspace.workflow_state?.report_ready ?? approved > 0;
+  const ready = (workspace.workflow_state?.report_ready ?? approved > 0) && workspace.case.analysis_version > 0;
 
   return (
     <section className="space-y-5">
@@ -105,13 +105,27 @@ export function ReportPanel({ caseId, workspace, busy, request }: { caseId: numb
         title={step.title}
         description={step.description}
         action={
-          <button className="button-primary" disabled={Boolean(busy) || !ready} onClick={() => request(`/cases/${caseId}/legal-analysis-report`)}>
-            <FileText size={16} />{report ? "重新生成报告" : "生成法律分析报告"}
-          </button>
+          <div className="flex flex-wrap gap-2">
+            <button className="button-primary" disabled={Boolean(busy) || !ready} onClick={() => request(`/cases/${caseId}/legal-analysis-report`)}>
+              <FileText size={16} />{report ? "重新生成报告" : "生成法律分析报告"}
+            </button>
+            {report && (
+              <button
+                className="button-secondary"
+                disabled={Boolean(busy) || !["已接受", "已修改"].includes(report.review_status)}
+                onClick={() => request(`/cases/${caseId}/reports/${report.id}/publish`, "POST", {
+                  operation_id: operationId(`report-${caseId}-${report.id}`),
+                  reason: "人工复核当前报告后正式发布。",
+                })}
+              >
+                <Check size={16} />正式发布报告
+              </button>
+            )}
+          </div>
         }
       />
 
-      {!ready && <div className="feedback-state border-[var(--warning-border)] bg-[var(--warning-bg)] text-[var(--warning)]">至少完成一项当前版本法律分析并通过人工复核后，才能生成报告。</div>}
+      {!ready && <div className="feedback-state border-[var(--warning-border)] bg-[var(--warning-bg)] text-[var(--warning)]">请先完成复核并正式发布当前法律分析集合，再生成报告。</div>}
 
       {report ? (
         <article className="workspace-card">
@@ -122,7 +136,9 @@ export function ReportPanel({ caseId, workspace, busy, request }: { caseId: numb
                 <h3 className="font-semibold text-ink">{report.title}</h3>
               </div>
               <p className="mt-2 flex flex-wrap items-center gap-2 text-xs text-slate-500">
-                <span className="version-chip version-chip-court"><span className="text-slate-400">报告</span><span className="font-semibold">V{report.version}</span></span>
+                <span className="version-chip"><span className="text-slate-400">生成</span><span className="font-semibold">G{report.version}</span></span>
+                <span className="version-chip version-chip-court"><span className="text-slate-400">正式报告</span><span className="font-semibold">{report.report_version > 0 ? `V${report.report_version}` : "未发布"}</span></span>
+                <span className="version-chip"><span className="text-slate-400">正式分析</span><span className="font-semibold">{report.analysis_version > 0 ? `V${report.analysis_version}` : "未发布"}</span></span>
                 <span className="version-chip"><span className="text-slate-400">事实</span><span className="font-semibold">V{report.fact_version}</span></span>
                 <span className="version-chip"><span className="text-slate-400">争点</span><span className="font-semibold">V{report.issue_version}</span></span>
               </p>

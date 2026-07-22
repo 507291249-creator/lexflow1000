@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { Check, History, Play, Save, X } from "lucide-react";
-import type { AIOutput, CaseFact, CaseWorkspace, WorkUnit } from "@/lib/api";
+import { operationId, type AIOutput, type CaseFact, type CaseWorkspace, type WorkUnit } from "@/lib/api";
 import { getWorkflowStepConfig } from "@/lib/workflow-config";
 import { EntityCode } from "@/components/ui/ReasoningUI";
 import { EmptyState, PanelHeading, StatusBadge } from "./shared";
@@ -80,9 +80,9 @@ function FactExtractionHistory({ outputs }: { outputs: AIOutput[] }) {
       <button type="button" className="flex w-full items-center justify-between gap-2 px-4 py-3 text-left" onClick={() => setOpen((value) => !value)}>
         <span className="flex items-center gap-2 text-sm font-medium text-ink">
           <History size={15} className="text-slate-400" />
-          事实提取版本谱系
+          事实提取生成历史
         </span>
-        <span className="text-xs text-slate-500">{outputs.length} 个版本 · 当前 V{outputs[0].version}</span>
+        <span className="text-xs text-slate-500">{outputs.length} 次生成 · 最新 G{outputs[0].version}</span>
       </button>
       {open && (
         <div className="border-t border-line-subtle px-4 py-4">
@@ -94,7 +94,7 @@ function FactExtractionHistory({ outputs }: { outputs: AIOutput[] }) {
                 onClick={() => setActiveVersion(item.version)}
                 className={`version-chip ${item.version === active.version ? "version-chip-court" : ""}`}
               >
-                <span className="text-slate-400">V</span>
+                <span className="text-slate-400">生成 G</span>
                 <span className="font-semibold">{item.version}</span>
                 {item.review_status && <span className="ml-1 text-[10px] text-slate-400">{item.review_status}</span>}
               </button>
@@ -144,11 +144,23 @@ export function FactReviewPanel({ caseId, workspace, busy, request }: { caseId: 
             >
               <Check size={16} />一键确认 AI 事实
             </button>
+            <button
+              className="button-secondary"
+              disabled={Boolean(busy) || pending.length > 0 || confirmed.length === 0}
+              onClick={() => request(`/cases/${caseId}/facts/publish`, "POST", {
+                operation_id: operationId(`facts-${caseId}`),
+                reason: "人工确认当前事实集合后正式发布。",
+              })}
+            >
+              <Save size={16} />正式发布事实
+            </button>
           </div>
         }
       />
 
       <div className="flex flex-wrap gap-2 text-sm">
+        <VersionChip label="正式事实" value={workspace.case.fact_version > 0 ? `V${workspace.case.fact_version}` : "未发布"} tone="court" />
+        <VersionChip label="输入材料" value={workspace.case.material_version > 0 ? `V${workspace.case.material_version}` : "未发布"} />
         <span className="status-badge status-pending">待人工确认 {pending.length}</span>
         <span className="status-badge status-confirmed">已人工确认 {confirmed.length}</span>
         <span className="status-badge status-expired">已驳回 {rejected.length}</span>

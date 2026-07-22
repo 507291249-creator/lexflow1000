@@ -200,8 +200,11 @@ class CaseOut(BaseModel):
     next_follow_up_at: str
     next_action: str
     workflow_mode: str = "standard"
+    material_version: int = 0
     fact_version: int = 1
     issue_version: int = 1
+    analysis_version: int = 0
+    report_version: int = 0
     created_at: datetime
 
     class Config:
@@ -452,8 +455,11 @@ class AIOutputOut(BaseModel):
     work_unit_id: Optional[int] = None
     review_status: str = "待复核"
     version: int = 1
+    material_version: int = 0
     fact_version: int = 1
     issue_version: int = 1
+    analysis_version: int = 0
+    report_version: int = 0
     input_snapshot_json: Any = {}
     execution_mode: str = "llm"
     created_at: datetime
@@ -496,6 +502,61 @@ class WorkflowEventOut(BaseModel):
     message: str
     payload_json: Any
     created_at: datetime
+
+
+class VersionHistoryEntry(BaseModel):
+    event_id: str
+    entry_type: Literal["generation", "publication"]
+    event_type: str
+    object_type: str
+    object_id: Optional[int] = None
+    ai_output_id: Optional[int] = None
+    work_unit_id: Optional[int] = None
+    generation_version: Optional[int] = None
+    published_version: Optional[int] = None
+    before_versions: Optional[dict[str, int]] = None
+    after_versions: Optional[dict[str, int]] = None
+    input_versions: Optional[dict[str, int]] = None
+    digest: Optional[str] = None
+    reason: Optional[str] = None
+    is_current: bool
+    is_stale: bool
+    stale_reason: Optional[str] = None
+    created_at: datetime
+
+
+class VersionHistoryPage(BaseModel):
+    current_versions: WorkflowVersionsSchema
+    page: int
+    page_size: int
+    total: int
+    items: list[VersionHistoryEntry] = Field(default_factory=list)
+
+
+class ReasoningTraceEntry(BaseModel):
+    event_id: str
+    event_source: Literal["decision_trace", "workflow_event"]
+    event_type: str
+    action: Optional[str] = None
+    object_type: Optional[str] = None
+    object_id: Optional[int] = None
+    ai_output_id: Optional[int] = None
+    work_unit_id: Optional[int] = None
+    ai_suggestion: Optional[str] = None
+    human_revision: Optional[str] = None
+    revision_reason: Optional[str] = None
+    tags: Optional[list[str]] = None
+    before_versions: Optional[dict[str, int]] = None
+    after_versions: Optional[dict[str, int]] = None
+    input_versions: Optional[dict[str, int]] = None
+    created_at: datetime
+
+
+class ReasoningTracePage(BaseModel):
+    page: int
+    page_size: int
+    total: int
+    items: list[ReasoningTraceEntry] = Field(default_factory=list)
 
 
 class WorkRecordOut(BaseModel):
@@ -564,6 +625,7 @@ class FactOut(BaseModel):
     source_document: str
     status: str
     confidence: str
+    material_version: int = 0
     fact_version: int = 1
     created_at: datetime
     updated_at: datetime
@@ -581,6 +643,7 @@ class IssueOut(BaseModel):
     importance: str = "中"
     related_facts: list[str] = []
     related_fact_ids: list[str] = []
+    fact_version: int = 0
     issue_version: int = 1
     created_at: datetime
     updated_at: datetime

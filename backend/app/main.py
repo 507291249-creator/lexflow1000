@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Annotated, Optional
 from urllib.parse import quote
 
-from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Request, UploadFile
+from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from sqlalchemy import inspect, text
@@ -36,6 +36,7 @@ from .services.storage import (
     build_object_key,
     get_storage_service,
 )
+from .services.version_history import get_reasoning_trace, get_version_history
 from .services.workflow import (
     compare_and_log_workflow_states,
     compute_legacy_workflow_state,
@@ -598,8 +599,11 @@ def serialize_output(output: models.AIOutput, db: Optional[Session] = None) -> d
         "work_unit_id": output.work_unit_id,
         "review_status": output.review_status,
         "version": output.version,
+        "material_version": output.material_version,
         "fact_version": output.fact_version,
         "issue_version": output.issue_version,
+        "analysis_version": output.analysis_version,
+        "report_version": output.report_version,
         "input_snapshot_json": from_json(output.input_snapshot_json, {}),
         "created_at": output.created_at,
     }
@@ -672,6 +676,7 @@ def serialize_fact(item: models.CaseFact) -> dict:
         "source_document": item.source_document,
         "status": item.status,
         "confidence": item.confidence,
+        "material_version": item.material_version,
         "fact_version": item.fact_version,
         "created_at": item.created_at,
         "updated_at": item.updated_at,
@@ -691,6 +696,7 @@ def serialize_issue(item: models.CaseIssue) -> dict:
         "importance": item.importance,
         "related_facts": from_json(item.related_facts, []),
         "related_fact_ids": [str(value) for value in from_json(item.related_fact_ids, [])],
+        "fact_version": item.fact_version,
         "issue_version": item.issue_version,
         "created_at": item.created_at,
         "updated_at": item.updated_at,
@@ -3258,3 +3264,33 @@ def workflow_events(case_id: int, db: Session = Depends(get_db)):
         }
         for item in events
     ]
+
+
+@app.get(
+    "/cases/{case_id}/version-history",
+    response_model=schemas.VersionHistoryPage,
+)
+def version_history(
+    case_id: int,
+    page: Annotated[int, Query(ge=1)] = 1,
+    page_size: Annotated[int, Query(ge=1, le=100)] = 25,
+    db: Session = Depends(get_db),
+):
+    with db.no_autoflush:
+        case = require_case(db, case_id)
+        return get_version_history(db, case, page=page, page_size=page_size)
+
+
+@app.get(
+    "/cases/{case_id}/reasoning-trace",
+    response_model=schemas.ReasoningTracePage,
+)
+def reasoning_trace(
+    case_id: int,
+    page: Annotated[int, Query(ge=1)] = 1,
+    page_size: Annotated[int, Query(ge=1, le=100)] = 25,
+    db: Session = Depends(get_db),
+):
+    with db.no_autoflush:
+        case = require_case(db, case_id)
+        return get_reasoning_trace(db, case, page=page, page_size=page_size)

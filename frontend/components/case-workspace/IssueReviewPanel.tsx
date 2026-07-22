@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { Check, Play, Plus, Save, Trash2, X } from "lucide-react";
-import type { CaseIssue, CaseWorkspace } from "@/lib/api";
+import { operationId, type CaseIssue, type CaseWorkspace } from "@/lib/api";
 import { getWorkflowStepConfig } from "@/lib/workflow-config";
 import { EntityCode } from "@/components/ui/ReasoningUI";
 import { EmptyState, PanelHeading, StatusBadge } from "./shared";
@@ -63,11 +63,25 @@ export function IssueReviewPanel({ caseId, workspace, busy, request }: { caseId:
             <button className="button-secondary" disabled={Boolean(busy)} onClick={() => setEditing(newDraft())}>
               <Plus size={16} />新增争点
             </button>
+            <button
+              className="button-secondary"
+              disabled={Boolean(busy) || pending.length > 0 || workspace.issues.length === 0 || workspace.case.fact_version <= 0}
+              onClick={() => request(`/cases/${caseId}/issues/publish`, "POST", {
+                operation_id: operationId(`issues-${caseId}`),
+                reason: "人工确认当前争点集合后正式发布。",
+              })}
+            >
+              <Save size={16} />正式发布争点
+            </button>
           </div>
         }
       />
 
       {!factsConfirmed && <div className="feedback-state border-[var(--warning-border)] bg-[var(--warning-bg)] text-[var(--warning)]">请先完成事实确认，再运行争点识别。</div>}
+      <div className="flex flex-wrap gap-2">
+        <VersionChip label="输入事实" value={workspace.case.fact_version > 0 ? `V${workspace.case.fact_version}` : "未发布"} />
+        <VersionChip label="正式争点" value={workspace.case.issue_version > 0 ? `V${workspace.case.issue_version}` : "未发布"} tone="court" />
+      </div>
 
       {!workspace.issues.length ? (
         <EmptyState title="尚未识别争点" description="完成事实确认后，点击“生成 AI 争点”。" />

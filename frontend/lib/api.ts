@@ -16,8 +16,11 @@ export type CaseItem = {
   next_follow_up_at: string;
   next_action: string;
   workflow_mode: string;
+  material_version: number;
   fact_version: number;
   issue_version: number;
+  analysis_version: number;
+  report_version: number;
   created_at: string;
 };
 
@@ -42,8 +45,11 @@ export type AIOutput = {
   work_unit_id: number | null;
   review_status: string;
   version: number;
+  material_version: number;
   fact_version: number;
   issue_version: number;
+  analysis_version: number;
+  report_version: number;
   input_snapshot_json: Record<string, unknown>;
   execution_mode: "llm" | "fallback" | "unknown";
   created_at: string;
@@ -138,6 +144,93 @@ export type WorkflowEvent = {
   created_at: string;
 };
 
+export type WorkflowVersions = {
+  material_version: number;
+  fact_version: number;
+  issue_version: number;
+  analysis_version: number;
+  report_version: number;
+};
+
+export type WorkflowBlocker = {
+  code: string;
+  step: string;
+  severity: "blocking" | "warning" | "info";
+  message: string;
+  entity_type: string | null;
+  entity_ids: number[];
+  resolution: string | null;
+  details: Record<string, unknown>;
+};
+
+export type StaleOutput = {
+  entity_type: string;
+  entity_id: number;
+  title: string;
+  review_status: string;
+  is_stale: boolean;
+  stale_reason: string;
+  stale_at: string | null;
+  input_versions: Record<string, number>;
+  current_versions: Record<string, number>;
+  required_action: string;
+};
+
+export type VersionHistoryEntry = {
+  event_id: string;
+  entry_type: "generation" | "publication";
+  event_type: string;
+  object_type: string;
+  object_id: number | null;
+  ai_output_id: number | null;
+  work_unit_id: number | null;
+  generation_version: number | null;
+  published_version: number | null;
+  before_versions: Record<string, number> | null;
+  after_versions: Record<string, number> | null;
+  input_versions: Record<string, number> | null;
+  digest: string | null;
+  reason: string | null;
+  is_current: boolean;
+  is_stale: boolean;
+  stale_reason: string | null;
+  created_at: string;
+};
+
+export type VersionHistoryPage = {
+  current_versions: WorkflowVersions;
+  page: number;
+  page_size: number;
+  total: number;
+  items: VersionHistoryEntry[];
+};
+
+export type ReasoningTraceEntry = {
+  event_id: string;
+  event_source: "decision_trace" | "workflow_event";
+  event_type: string;
+  action: string | null;
+  object_type: string | null;
+  object_id: number | null;
+  ai_output_id: number | null;
+  work_unit_id: number | null;
+  ai_suggestion: string | null;
+  human_revision: string | null;
+  revision_reason: string | null;
+  tags: string[] | null;
+  before_versions: Record<string, number> | null;
+  after_versions: Record<string, number> | null;
+  input_versions: Record<string, number> | null;
+  created_at: string;
+};
+
+export type ReasoningTracePage = {
+  page: number;
+  page_size: number;
+  total: number;
+  items: ReasoningTraceEntry[];
+};
+
 export type WorkRecord = {
   id: number;
   case_id: number;
@@ -195,6 +288,7 @@ export type CaseFact = {
   source_document: string;
   status: string;
   confidence: string;
+  material_version: number;
   fact_version: number;
   created_at: string;
   updated_at: string;
@@ -212,6 +306,7 @@ export type CaseIssue = {
   importance: string;
   related_facts: string[];
   related_fact_ids: string[];
+  fact_version: number;
   issue_version: number;
   created_at: string;
   updated_at: string;
@@ -228,6 +323,15 @@ export type CaseWorkspace = {
   traces: Trace[];
   memory_candidates: MemoryItem[];
   workflow_state?: {
+    current_step: string;
+    completed_steps: string[];
+    available_steps: string[];
+    blockers: WorkflowBlocker[];
+    stale_outputs: StaleOutput[];
+    versions: WorkflowVersions;
+    report_status: "REPORT_DRAFT_EXISTS" | "REPORT_PENDING_REVIEW" | "REPORT_PUBLISHED" | null;
+    coverage: Record<string, unknown>;
+    next_action: { code: string; label: string; entity_type: string | null; entity_ids: number[] } | null;
     facts_confirmed: boolean;
     issues_confirmed: boolean;
     approved_analysis_count: number;
@@ -250,6 +354,13 @@ export async function api<T>(path: string, options?: RequestInit): Promise<T> {
     throw new Error(await response.text());
   }
   return response.json();
+}
+
+export function operationId(scope: string) {
+  const suffix = typeof crypto !== "undefined" && "randomUUID" in crypto
+    ? crypto.randomUUID()
+    : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  return `${scope}-${suffix}`;
 }
 
 export { API_BASE };

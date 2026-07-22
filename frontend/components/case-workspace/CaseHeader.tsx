@@ -45,8 +45,11 @@ export function CaseHeader({
             </span>
           </div>
           <div className="mt-3 flex flex-wrap items-center gap-2">
+            <VersionChip label="材料" value={item.material_version > 0 ? `V${item.material_version}` : "未发布"} tone="court" />
             <VersionChip label="事实" value={`V${item.fact_version}`} tone="court" />
             <VersionChip label="争点" value={`V${item.issue_version}`} tone="court" />
+            <VersionChip label="分析" value={item.analysis_version > 0 ? `V${item.analysis_version}` : "未发布"} tone="court" />
+            <VersionChip label="报告" value={item.report_version > 0 ? `V${item.report_version}` : "未发布"} tone="court" />
             <span className="inline-flex shrink-0 items-center gap-1 rounded border border-[var(--court-border)] bg-[var(--court-subtle)] px-1.5 py-0.5 text-[11px] font-medium text-[var(--court)]">
               当前阶段 · {currentStep.title}
             </span>

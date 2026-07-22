@@ -19,12 +19,32 @@ import { IssueReviewPanel } from "./IssueReviewPanel";
 import { MaterialsPanel } from "./MaterialsPanel";
 import { ReportPanel } from "./ReportPanel";
 import { WorkflowNavigator } from "./WorkflowNavigator";
+import { VersionHistoryPanel } from "./VersionHistoryPanel";
 import { WorkspaceFeedback } from "./shared";
 
 function requestErrorMessage(error: unknown) {
   if (!(error instanceof Error)) return "操作未完成，请重试。";
   if (error.message === "Failed to fetch" || error.message.toLowerCase().includes("networkerror")) return "暂时无法连接后端服务。请等待 Render 服务唤醒，或检查前端地址是否已加入后端跨域配置。";
   try { return (JSON.parse(error.message) as { detail?: string }).detail || error.message; } catch { return error.message || "操作未完成，请重试。"; }
+}
+
+const staleReasonLabels: Record<string, string> = {
+  material_version_changed: "材料正式版本已变化",
+  fact_version_changed: "事实正式版本已变化",
+  issue_version_changed: "争点正式版本已变化",
+  analysis_version_changed: "分析正式版本已变化",
+  report_version_changed: "报告正式版本已变化",
+  analysis_digest_changed: "正式分析内容摘要已变化",
+  report_digest_changed: "正式报告内容摘要已变化",
+  analysis_set_changed: "正式分析集合已变化",
+  input_versions_changed: "多个输入正式版本已变化",
+  input_versions_and_analysis_set_changed: "输入版本和正式分析集合均已变化",
+  report_pending_review: "报告尚未完成人工复核",
+};
+
+function formatVersions(versions: Record<string, number>) {
+  const labels: Record<string, string> = { material_version: "材料", fact_version: "事实", issue_version: "争点", analysis_version: "分析", report_version: "报告" };
+  return Object.entries(versions).map(([key, value]) => `${labels[key] || key} ${value > 0 ? `V${value}` : "未发布"}`).join(" · ");
 }
 
 export function CaseWorkspaceView({ caseId, workspace, activeStep, onStepChange, onReload }: { caseId: number; workspace: CaseWorkspace; activeStep: WorkflowStepCode; onStepChange: (step: WorkflowStepCode) => void; onReload: () => Promise<boolean> }) {
@@ -56,6 +76,10 @@ export function CaseWorkspaceView({ caseId, workspace, activeStep, onStepChange,
   const factUnit = workspace.work_units.find((unit) => unit.code === "fact_extraction");
   const nextStep = getNextWorkflowStep(activeStep);
   const contextRail = <ContextRail workspace={workspace} activeStep={activeStep} />;
+  const historyRefreshKey = workspace.workflow_state?.versions
+    ? Object.values(workspace.workflow_state.versions).join(":")
+    : `${workspace.case.material_version}:${workspace.case.fact_version}:${workspace.case.issue_version}:${workspace.case.analysis_version}:${workspace.case.report_version}`;
+  const traceRefreshKey = `${historyRefreshKey}:${workspace.traces.length}`;
 
   return (
     <>
@@ -66,6 +90,10 @@ export function CaseWorkspaceView({ caseId, workspace, activeStep, onStepChange,
         contextRail={contextRail}
       >
         <WorkspaceFeedback loading={Boolean(busy) && busy !== "reload-workspace"} error={error} notice={notice} onRetry={() => void reloadWorkspace()} />
+        {workspace.workflow_state?.stale_outputs?.length ? <details className="feedback-state border-[var(--warning-border)] bg-[var(--warning-bg)] text-[var(--warning)]">
+          <summary className="cursor-pointer font-medium">{workspace.workflow_state.stale_outputs.length} 项产物需要更新</summary>
+          <div className="mt-2 space-y-1 text-xs">{workspace.workflow_state.stale_outputs.map((item) => <div key={`${item.entity_type}:${item.entity_id}`}>{item.title} · {staleReasonLabels[item.stale_reason] || item.stale_reason} · 输入：{formatVersions(item.input_versions)} · 当前：{formatVersions(item.current_versions)}</div>)}</div>
+        </details> : null}
         {activeStep === "case_input" && (
           <>
             <CaseOverviewPanel workspace={workspace} onNext={onStepChange} />
@@ -76,7 +104,7 @@ export function CaseWorkspaceView({ caseId, workspace, activeStep, onStepChange,
         {activeStep === "fact_review" && <FactReviewPanel caseId={caseId} workspace={workspace} busy={busy} request={request} />}
         {activeStep === "issue_review" && <IssueReviewPanel caseId={caseId} workspace={workspace} busy={busy} request={request} />}
         {activeStep === "legal_analysis" && <AnalysisPanel caseId={caseId} workspace={workspace} busy={busy} request={request} />}
-        {activeStep === "report" && <><ReportPanel caseId={caseId} workspace={workspace} busy={busy} request={request} /><DecisionTracePanel traces={workspace.traces} /></>}
+        {activeStep === "report" && <><ReportPanel caseId={caseId} workspace={workspace} busy={busy} request={request} /><VersionHistoryPanel caseId={caseId} refreshKey={historyRefreshKey} /><DecisionTracePanel caseId={caseId} refreshKey={traceRefreshKey} /></>}
         {nextStep && <div className="flex justify-end"><button className="button-secondary" type="button" onClick={() => onStepChange(nextStep)}>进入下一步<ChevronRight size={16} /></button></div>}
       </ReasoningWorkbenchLayout>
       <CaseInfoDrawer open={caseInfoOpen} caseItem={workspace.case} onClose={() => setCaseInfoOpen(false)} onUpdated={async () => { const ok = await onReload(); return void ok; }} />
