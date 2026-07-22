@@ -13,7 +13,7 @@
   --ink: #E8EEF7;
   --ink-subtle: #B3C0D2;
   --muted: #8B9BB2;
-  --faint: #64748B;
+  --faint: #8A98AE;
   --line: #283A52;
   --line-subtle: #1F3050;
 
@@ -52,7 +52,7 @@
   --danger-border: #5C2A26;
 
   /* ===== Inactive (slate) — history, expired, disabled, auxiliary ===== */
-  --inactive: #7A8A9E;
+  --inactive: #8595AA;
   --inactive-subtle: #1F2A38;
 
   /* ===== Sidebar chrome — deep navy, tied to the same blue family ===== */
@@ -441,7 +441,7 @@ button, a { -webkit-tap-highlight-color: transparent; }
 
 /* ===== Work queue table (cases) ===== */
 .work-queue {
-  @apply overflow-hidden rounded-lg border border-line bg-[var(--surface)];
+  @apply overflow-x-auto rounded-lg border border-line bg-[var(--surface)];
   box-shadow: var(--shadow-card-sm);
 }
 

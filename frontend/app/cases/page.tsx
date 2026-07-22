@@ -89,7 +89,7 @@ export default function CasesPage() {
 
       {!loading && !error && filtered.length > 0 && (
         <div className="work-queue">
-          <table>
+          <table className="w-full table-fixed">
             <thead>
               <tr>
                 <th className="w-[34%]">案件</th>

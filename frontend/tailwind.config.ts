@@ -34,7 +34,7 @@ const config: Config = {
         "danger": "#E06560",
         "danger-bg": "#331816",
         "danger-border": "#5C2A26",
-        "inactive": "#7A8A9E",
+        "inactive": "#8595AA",
         "inactive-subtle": "#1F2A38"
       },
       fontFamily: {
